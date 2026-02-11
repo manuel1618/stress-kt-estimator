@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 from kt_optimizer.logger import attach_gui_handler, build_logger
 from kt_optimizer.models import FORCE_COLUMNS, ObjectiveMode, SignMode, SolverSettings
 from kt_optimizer.report import generate_report
-from kt_optimizer.solver import solve
+from kt_optimizer.solver import find_minimal_unlink, suggest_unlink_from_data, solve
 from kt_optimizer.ui.result_panel import ResultPanel
 from kt_optimizer.ui.table_model import LoadCaseTableModel
 
@@ -81,7 +81,9 @@ class MainWindow(QMainWindow):
 
         actions = QHBoxLayout()
         self.solve_btn = QPushButton("Solve")
+        self.suggest_unlink_btn = QPushButton("Suggest unlink")
         self.report_btn = QPushButton("Generate Report")
+        actions.addWidget(self.suggest_unlink_btn)
         actions.addWidget(self.report_btn)
         actions.addWidget(self.solve_btn)
 
@@ -110,6 +112,7 @@ class MainWindow(QMainWindow):
         load_btn.clicked.connect(self._load_csv)
         save_btn.clicked.connect(self._save_csv)
         self.solve_btn.clicked.connect(self._solve)
+        self.suggest_unlink_btn.clicked.connect(self._suggest_unlink)
         self.report_btn.clicked.connect(self._report)
 
         self.last_result = None
@@ -168,8 +171,7 @@ class MainWindow(QMainWindow):
         sign_modes: list[SignMode] | None = None
         if use_separate:
             sign_modes = [
-                self.sign_mode_combo[comp].currentData()
-                or SignMode.LINKED
+                self.sign_mode_combo[comp].currentData() or SignMode.LINKED
                 for comp in FORCE_COLUMNS
             ]
         return SolverSettings(
@@ -197,6 +199,70 @@ class MainWindow(QMainWindow):
         )
         if path:
             self.table_model.save_csv(path)
+
+    def _suggest_unlink(self) -> None:
+        try:
+            base = self._settings()
+        except ValueError:
+            QMessageBox.critical(self, "Input Error", "Safety factor must be numeric")
+            return
+        if self.table_model.df.empty:
+            QMessageBox.warning(self, "No data", "Load or add load cases first.")
+            return
+
+        # Data-based hint (no solve)
+        data_suggested = suggest_unlink_from_data(self.table_model.df)
+        if data_suggested:
+            self.logger.info(
+                "Data suggests unlinking (different +/− behaviour): %s",
+                ", ".join(data_suggested),
+            )
+
+        # Find minimal unlink set and apply
+        modes, result = find_minimal_unlink(
+            self.table_model.df,
+            base,
+            max_underprediction_tol=-0.01,
+            logger=self.logger,
+        )
+        self.use_sign.setChecked(True)
+        for i, comp in enumerate(FORCE_COLUMNS):
+            combo = self.sign_mode_combo[comp]
+            combo.setCurrentIndex(
+                1 if (i < len(modes) and modes[i] == SignMode.INDIVIDUAL) else 0
+            )
+
+        unlinked = [
+            FORCE_COLUMNS[i]
+            for i in range(len(modes))
+            if modes[i] == SignMode.INDIVIDUAL
+        ]
+        if result and result.success:
+            self.last_result = result
+            self.results_panel.update_result(result)
+            QMessageBox.information(
+                self,
+                "Suggest unlink",
+                f"Unlinked {len(unlinked)} direction(s): {', '.join(unlinked) or 'none'}.\n"
+                f"Solve succeeded (max underprediction: {result.max_underprediction:.4f})."
+                + (
+                    f"\nData also suggested: {', '.join(data_suggested)}."
+                    if data_suggested
+                    else ""
+                ),
+            )
+        else:
+            msg = result.message if result else "No result"
+            self.logger.warning("Minimal unlink could not meet tolerance: %s", msg)
+            if result:
+                self.last_result = result
+                self.results_panel.update_result(result)
+            QMessageBox.warning(
+                self,
+                "Suggest unlink",
+                f"Applied unlink for: {', '.join(unlinked) or 'none'}.\n"
+                f"Solve did not meet tolerance: {msg}",
+            )
 
     def _solve(self) -> None:
         try:

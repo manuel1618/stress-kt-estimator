@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import pandas as pd
 
-from kt_optimizer.models import ObjectiveMode, SolverSettings, TABLE_COLUMNS
-from kt_optimizer.solver import solve
+from kt_optimizer.models import (
+    FORCE_COLUMNS,
+    ObjectiveMode,
+    SignMode,
+    SolverSettings,
+    TABLE_COLUMNS,
+)
+from kt_optimizer.solver import find_minimal_unlink, suggest_unlink_from_data, solve
 
 
 def _sample_df():
@@ -50,3 +56,54 @@ def test_bad_safety_factor_fails():
     settings = SolverSettings(safety_factor=0)
     result = solve(df, settings)
     assert not result.success
+
+
+def test_suggest_unlink_from_data_fat_lower_bracket():
+    """With Fy both + and - and different stress/force behaviour, Fy is suggested."""
+    df = _sample_df()
+    # Add a case with negative Fy and different implied Kt
+    df = pd.concat(
+        [
+            df,
+            pd.DataFrame(
+                [["LC5", 0, -100, 0, 0, 0, 0, 60]],
+                columns=TABLE_COLUMNS,
+            ),
+        ],
+        ignore_index=True,
+    )
+    suggested = suggest_unlink_from_data(df, ratio_threshold=2.0)
+    assert "Fy" in suggested
+
+
+def test_find_minimal_unlink_returns_valid_config():
+    """find_minimal_unlink returns a valid sign_mode list and result."""
+    df = pd.DataFrame(
+        {
+            "Case Name": ["3", "5", "59"],
+            "Fx": [0, 0, 0],
+            "Fy": [10, 22, -24],
+            "Fz": [38, 29, 3],
+            "Mx": [0, 0, 0],
+            "My": [0, 0, 0],
+            "Mz": [0, 0, 0],
+            "Stress": [125, 286, 286],
+        }
+    )
+    base = SolverSettings(
+        use_separate_sign=True,
+        objective_mode=ObjectiveMode.MINIMIZE_MAX_DEVIATION,
+        safety_factor=1.0,
+        enforce_nonnegative_kt=True,
+    )
+    modes, result = find_minimal_unlink(
+        df, base, max_underprediction_tol=-0.01, max_rms_error=1.0
+    )
+    unlinked = [
+        FORCE_COLUMNS[i] for i in range(len(modes)) if modes[i] == SignMode.INDIVIDUAL
+    ]
+    assert len(modes) == 6
+    assert all(m in (SignMode.LINKED, SignMode.INDIVIDUAL) for m in modes)
+    assert result is not None
+    assert result.success
+    assert len(unlinked) <= 6
