@@ -1,0 +1,2 @@
+QMainWindow { background: #f7f7f7; }
+QPlainTextEdit { background: #10151a; color: #d9f1ff; font-family: monospace; }
