@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -22,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from kt_optimizer.logger import attach_gui_handler, build_logger
-from kt_optimizer.models import ObjectiveMode, SolverSettings
+from kt_optimizer.models import FORCE_COLUMNS, ObjectiveMode, SignMode, SolverSettings
 from kt_optimizer.report import generate_report
 from kt_optimizer.solver import solve
 from kt_optimizer.ui.result_panel import ResultPanel
@@ -117,7 +118,25 @@ class MainWindow(QMainWindow):
         panel = QWidget()
         layout = QVBoxLayout(panel)
 
-        self.use_sign = QCheckBox("Use separate Kt for + / - direction")
+        self.use_sign = QCheckBox("Use separate + / - for directions")
+        self.use_sign.toggled.connect(self._on_use_sign_toggled)
+
+        # Container for per-direction dropdowns; visible only when use_sign is checked
+        self.sign_mode_widget = QWidget()
+        sign_form = QFormLayout(self.sign_mode_widget)
+        sign_form.setContentsMargins(0, 0, 0, 0)
+        self.sign_mode_combo: dict[str, QComboBox] = {}
+        for comp in FORCE_COLUMNS:
+            combo = QComboBox()
+            combo.addItem("Linked (+/− same magnitude, opposite sign)", SignMode.LINKED)
+            combo.addItem("Individual (separate + and − Kt)", SignMode.INDIVIDUAL)
+            combo.setCurrentIndex(0)
+            self.sign_mode_combo[comp] = combo
+            sign_form.addRow(f"{comp}:", combo)
+        self.sign_mode_widget.setVisible(False)
+        layout.addWidget(self.use_sign)
+        layout.addWidget(self.sign_mode_widget)
+
         self.objective = QComboBox()
         self.objective.addItem(
             "Minimize max deviation (recommended)", ObjectiveMode.MINIMIZE_MAX_DEVIATION
@@ -128,7 +147,6 @@ class MainWindow(QMainWindow):
         self.nonnegative = QCheckBox("Enforce Kt >= 0")
         self.nonnegative.setChecked(True)
 
-        layout.addWidget(self.use_sign)
         layout.addWidget(QLabel("Objective mode"))
         layout.addWidget(self.objective)
         layout.addWidget(QLabel("Safety factor"))
@@ -138,13 +156,25 @@ class MainWindow(QMainWindow):
 
         return panel
 
+    def _on_use_sign_toggled(self, checked: bool) -> None:
+        self.sign_mode_widget.setVisible(checked)
+
     def _settings(self) -> SolverSettings:
         data = self.objective.currentData()
         objective_mode = (
             data if isinstance(data, ObjectiveMode) else ObjectiveMode(data)
         )
+        use_separate = self.use_sign.isChecked()
+        sign_modes: list[SignMode] | None = None
+        if use_separate:
+            sign_modes = [
+                self.sign_mode_combo[comp].currentData()
+                or SignMode.LINKED
+                for comp in FORCE_COLUMNS
+            ]
         return SolverSettings(
-            use_separate_sign=self.use_sign.isChecked(),
+            use_separate_sign=use_separate,
+            sign_mode_per_component=sign_modes,
             objective_mode=objective_mode,
             safety_factor=float(self.safety_factor.text()),
             enforce_nonnegative_kt=self.nonnegative.isChecked(),

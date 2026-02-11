@@ -13,14 +13,16 @@ class ResultPanel(QWidget):
         super().__init__()
         layout = QVBoxLayout(self)
         self.summary = QLabel("No results yet")
-        self.table = QTableWidget(0, 2)
-        self.table.setHorizontalHeaderLabels(["Kt", "Value"])
+        # One row, one column per Kt direction (widescreen: fx | -fx | fy | ...)
+        self.kt_table = QTableWidget(1, 0)
+        self.kt_table.verticalHeader().setVisible(False)
+        self.kt_table.setMaximumHeight(90)
 
         self.fig = Figure(figsize=(5, 4))
         self.canvas = FigureCanvas(self.fig)
 
         layout.addWidget(self.summary)
-        layout.addWidget(self.table)
+        layout.addWidget(self.kt_table)
         layout.addWidget(self.canvas)
 
     def update_result(self, result: SolverResult) -> None:
@@ -29,10 +31,10 @@ class ResultPanel(QWidget):
             f"Max over: {result.max_overprediction:.4f} | "
             f"Max under: {result.max_underprediction:.4f}"
         )
-        self.table.setRowCount(len(result.kt_names))
-        for i, (name, value) in enumerate(zip(result.kt_names, result.kt_values)):
-            self.table.setItem(i, 0, QTableWidgetItem(name))
-            self.table.setItem(i, 1, QTableWidgetItem(f"{value:.6f}"))
+        self.kt_table.setColumnCount(len(result.kt_names))
+        self.kt_table.setHorizontalHeaderLabels(result.kt_names)
+        for col, value in enumerate(result.kt_values):
+            self.kt_table.setItem(0, col, QTableWidgetItem(f"{value:.6f}"))
 
         self.fig.clear()
         ax1 = self.fig.add_subplot(121)

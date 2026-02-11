@@ -3,7 +3,18 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from kt_optimizer.models import SolverResult, SolverSettings
+from kt_optimizer.models import FORCE_COLUMNS, SignMode, SolverResult, SolverSettings
+
+
+def _format_sign_modes(settings: SolverSettings) -> str:
+    if not settings.use_separate_sign or not settings.sign_mode_per_component:
+        return "N/A (single signed per direction)"
+    parts = []
+    for i, comp in enumerate(FORCE_COLUMNS):
+        if i < len(settings.sign_mode_per_component):
+            m = settings.sign_mode_per_component[i]
+            parts.append(f"{comp}={m.value}")
+    return ", ".join(parts) if parts else "N/A"
 
 
 def _render_html(
@@ -35,6 +46,7 @@ th:first-child, td:first-child {{ text-align: left; }}
 <li>Objective: {getattr(settings.objective_mode, 'value', settings.objective_mode)}</li>
 <li>Safety factor: {settings.safety_factor}</li>
 <li>Separate +/- mode: {settings.use_separate_sign}</li>
+<li>Per-direction: {_format_sign_modes(settings)}</li>
 </ul>
 <h2>Load Cases</h2>
 {load_cases_html}
@@ -72,9 +84,14 @@ def generate_report(
         return out_path
 
     if out_path.suffix.lower() == ".pdf":
-        from weasyprint import HTML
+        from xhtml2pdf import pisa
 
-        HTML(string=html).write_pdf(str(out_path))
+        with open(out_path, "wb") as dest:
+            pisa_status = pisa.CreatePDF(
+                html.encode("utf-8"), dest=dest, encoding="utf-8"
+            )
+        if pisa_status.err:
+            raise RuntimeError("PDF generation failed (xhtml2pdf reported errors)")
         return out_path
 
     raise ValueError("Output path must end with .html or .pdf")

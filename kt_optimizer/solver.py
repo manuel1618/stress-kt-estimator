@@ -8,10 +8,12 @@ from scipy.optimize import linprog
 
 from kt_optimizer.models import (
     FORCE_COLUMNS,
+    SignMode,
     SolverResult,
     SolverSettings,
     TABLE_COLUMNS,
     ValidationCase,
+    expand_kt_to_canonical,
 )
 
 
@@ -54,15 +56,34 @@ def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     return work[TABLE_COLUMNS]
 
 
-def _build_force_matrix(df: pd.DataFrame, use_separate_sign: bool):
+def _build_force_matrix(df: pd.DataFrame, settings: SolverSettings):
     f = df[FORCE_COLUMNS].to_numpy(dtype=float)
-    if not use_separate_sign:
-        names = FORCE_COLUMNS.copy()
-        return f, names
-    f_pos = np.maximum(f, 0.0)
-    f_neg = np.abs(np.minimum(f, 0.0))
-    names = [f"{c}+" for c in FORCE_COLUMNS] + [f"{c}-" for c in FORCE_COLUMNS]
-    return np.hstack([f_pos, f_neg]), names
+    use_separate = settings.use_separate_sign
+    modes = settings.sign_mode_per_component
+
+    if not use_separate:
+        return f.copy(), list(FORCE_COLUMNS)
+
+    # When no per-component modes given, default to all individual (backward compat)
+    if modes is None or len(modes) != 6:
+        modes = [SignMode.INDIVIDUAL] * 6
+
+    # Per-component: linked => one signed column; individual => two columns (+, -)
+    cols_list: list[np.ndarray] = []
+    names: list[str] = []
+    for i, comp in enumerate(FORCE_COLUMNS):
+        mode = modes[i] if i < len(modes) else SignMode.LINKED
+        if mode == SignMode.LINKED:
+            cols_list.append(f[:, i : i + 1])
+            names.append(comp)
+        else:
+            f_pos = np.maximum(f[:, i], 0.0).reshape(-1, 1)
+            f_neg = np.abs(np.minimum(f[:, i], 0.0)).reshape(-1, 1)
+            cols_list.append(f_pos)
+            cols_list.append(f_neg)
+            names.append(f"{comp}+")
+            names.append(f"{comp}-")
+    return np.hstack(cols_list), names
 
 
 def _build_bounds(n_vars: int, enforce_nonnegative: bool):
@@ -105,7 +126,7 @@ def solve(
             success=False, message="No valid load cases with Stress provided"
         )
 
-    f_mat, kt_names = _build_force_matrix(normalized, settings.use_separate_sign)
+    f_mat, kt_names = _build_force_matrix(normalized, settings)
     sigma = normalized["Stress"].to_numpy(dtype=float).copy()
     logger.info("Building force matrix (%dx%d)", f_mat.shape[0], f_mat.shape[1])
 
@@ -113,8 +134,16 @@ def solve(
         return SolverResult(success=False, message="Safety factor must be > 0")
     sigma *= float(settings.safety_factor)
 
-    if settings.use_separate_sign:
-        logger.info("Using separate + / - formulation")
+    if settings.use_separate_sign and settings.sign_mode_per_component:
+        individual = [
+            FORCE_COLUMNS[i]
+            for i, m in enumerate(settings.sign_mode_per_component)
+            if i < len(settings.sign_mode_per_component) and m == SignMode.INDIVIDUAL
+        ]
+        if individual:
+            logger.info("Individual + / - for: %s", ", ".join(individual))
+        else:
+            logger.info("Linked + / - (signed) for all directions")
 
     logger.info(
         "Solving min-max deviation LP (%d constraints, %d variables)",
@@ -171,11 +200,14 @@ def solve(
     else:
         logger.error("Optimization failed: %s", message)
 
+    kt_names_canonical, kt_values_canonical = expand_kt_to_canonical(
+        kt_names, k.tolist()
+    )
     return SolverResult(
         success=bool(success),
         message=str(message),
-        kt_names=kt_names,
-        kt_values=k.tolist(),
+        kt_names=kt_names_canonical,
+        kt_values=kt_values_canonical,
         sigma_target=sigma.tolist(),
         sigma_pred=sigma_pred.tolist(),
         min_error=min_error,
