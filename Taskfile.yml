@@ -27,7 +27,7 @@ tasks:
   build:
     desc: build Windows exe with PyInstaller
     cmds:
-      - uv sync --group build
+      - uv sync --group dev
       - uv run python -m PyInstaller kt_optimizer.spec --distpath dist --workpath build
       - echo "Exe: dist/kt-optimizer.exe"
 

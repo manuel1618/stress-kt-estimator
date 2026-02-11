@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 
 from kt_optimizer.logger import attach_gui_handler, build_logger
 from kt_optimizer.models import FORCE_COLUMNS, ObjectiveMode, SignMode, SolverSettings
-from kt_optimizer.report import generate_report
+from kt_optimizer.export_excel import export_to_excel
 from kt_optimizer.solver import find_minimal_unlink, suggest_unlink_from_data, solve
 from kt_optimizer.ui.result_panel import ResultPanel
 from kt_optimizer.ui.table_model import LoadCaseTableModel
@@ -82,9 +82,9 @@ class MainWindow(QMainWindow):
         actions = QHBoxLayout()
         self.solve_btn = QPushButton("Solve")
         self.suggest_unlink_btn = QPushButton("Suggest unlink")
-        self.report_btn = QPushButton("Generate Report")
+        self.export_excel_btn = QPushButton("Export Excel")
         actions.addWidget(self.suggest_unlink_btn)
-        actions.addWidget(self.report_btn)
+        actions.addWidget(self.export_excel_btn)
         actions.addWidget(self.solve_btn)
 
         bottom_section = QWidget()
@@ -113,7 +113,7 @@ class MainWindow(QMainWindow):
         save_btn.clicked.connect(self._save_csv)
         self.solve_btn.clicked.connect(self._solve)
         self.suggest_unlink_btn.clicked.connect(self._suggest_unlink)
-        self.report_btn.clicked.connect(self._report)
+        self.export_excel_btn.clicked.connect(self._export_excel)
 
         self.last_result = None
 
@@ -278,25 +278,25 @@ class MainWindow(QMainWindow):
         if not result.success:
             QMessageBox.warning(self, "Solve failed", result.message)
 
-    def _report(self) -> None:
+    def _export_excel(self) -> None:
         if self.last_result is None:
             QMessageBox.information(
-                self, "No results", "Solve first before generating report"
+                self, "No results", "Solve first before exporting Excel"
             )
             return
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Generate report",
-            str(Path.cwd() / "kt_report.pdf"),
-            "PDF (*.pdf);;HTML (*.html)",
+            "Export Excel",
+            str(Path.cwd() / "kt_export.xlsx"),
+            "Excel (*.xlsx)",
         )
         if not path:
             return
         try:
-            out = generate_report(
+            out = export_to_excel(
                 self.table_model.df, self.last_result, self._settings(), path
             )
         except Exception as exc:
-            QMessageBox.critical(self, "Report generation failed", str(exc))
+            QMessageBox.critical(self, "Export failed", str(exc))
             return
-        QMessageBox.information(self, "Report generated", f"Wrote report to {out}")
+        QMessageBox.information(self, "Export done", f"Wrote {out}")

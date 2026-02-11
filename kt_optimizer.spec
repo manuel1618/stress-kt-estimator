@@ -1,5 +1,6 @@
 # PyInstaller spec for stress-kt-estimator Windows exe
-# Run: uv run pyinstaller kt_optimizer.spec
+# Run: uv run python -m PyInstaller kt_optimizer.spec --distpath dist --workpath build
+# Excludes trim scipy/matplotlib/pandas/numpy and unused Qt to reduce build time and exe size.
 
 a = Analysis(
     ["./kt_optimizer/main.py"],
@@ -14,12 +15,14 @@ a = Analysis(
         "kt_optimizer.ui.table_model",
         "numpy",
         "pandas",
-        "scipy",
-        "matplotlib",
+        "scipy.optimize._linprog_highs",
+        "scipy.optimize._highs",
+        "matplotlib.backends.backend_qtagg",
         "PySide6.QtCore",
         "PySide6.QtGui",
         "PySide6.QtWidgets",
-        "xhtml2pdf",
+        "openpyxl",
+        "kt_optimizer.export_excel",
     ],
     hookspath=[],
     hooksconfig={},
