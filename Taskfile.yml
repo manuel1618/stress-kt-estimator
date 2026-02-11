@@ -23,3 +23,20 @@ tasks:
     desc: run tests
     cmds:
       - uv run pytest tests/ -v
+
+  build:
+    desc: build Windows exe with PyInstaller
+    cmds:
+      - uv sync --group build
+      - uv run python -m PyInstaller kt_optimizer.spec --distpath dist --workpath build
+      - echo "Exe: dist/kt-optimizer.exe"
+
+  lint:
+    desc: lint code with ruff
+    cmds:
+      - uv run ruff check .
+
+  format:
+    desc: format code with ruff formatter
+    cmds:
+      - uv run ruff format .

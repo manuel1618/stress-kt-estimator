@@ -15,11 +15,17 @@ dependencies = [
   "matplotlib>=3.8",
   "PySide6>=6.6",
   "xhtml2pdf>=0.2.13",
+  "pyinstaller>=6.18.0",
+  "ruff>=0.15.0",
 ]
 
 [dependency-groups]
 dev = [
   "pytest>=8.0",
+  "ruff>=0.8",
+]
+build = [
+  "pyinstaller>=6.0",
 ]
 
 [tool.setuptools]

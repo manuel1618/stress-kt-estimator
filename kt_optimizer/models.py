@@ -14,7 +14,9 @@ class ObjectiveMode(str, Enum):
 class SignMode(str, Enum):
     """Per-direction +/- handling when separate + / - is enabled."""
 
-    LINKED = "linked"  # one Kt: + and - same magnitude, opposite sign (signed force column)
+    LINKED = (
+        "linked"  # one Kt: + and - same magnitude, opposite sign (signed force column)
+    )
     INDIVIDUAL = "individual"  # separate Kt for + and - (two design vars per direction)
 
 
@@ -77,8 +79,18 @@ TABLE_COLUMNS = ["Case Name", *FORCE_COLUMNS, "Stress"]
 
 # Display order: + then - for Fx, Fy, Fz, then same for Mx, My, Mz
 CANONICAL_KT_ORDER = [
-    "Fx+", "Fx-", "Fy+", "Fy-", "Fz+", "Fz-",
-    "Mx+", "Mx-", "My+", "My-", "Mz+", "Mz-",
+    "Fx+",
+    "Fx-",
+    "Fy+",
+    "Fy-",
+    "Fz+",
+    "Fz-",
+    "Mx+",
+    "Mx-",
+    "My+",
+    "My-",
+    "Mz+",
+    "Mz-",
 ]
 
 

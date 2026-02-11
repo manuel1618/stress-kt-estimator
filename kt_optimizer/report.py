@@ -9,14 +9,22 @@ from kt_optimizer.models import FORCE_COLUMNS, SignMode, SolverResult, SolverSet
 def _sign_modes_table_html(settings: SolverSettings) -> str:
     """Per-direction sign mode as a table when separate +/- is enabled."""
     if not settings.use_separate_sign or not settings.sign_mode_per_component:
-        return "<p class=\"muted\">Single signed Kt per direction (no +/- split).</p>"
+        return '<p class="muted">Single signed Kt per direction (no +/- split).</p>'
     rows = []
     for i, comp in enumerate(FORCE_COLUMNS):
         if i < len(settings.sign_mode_per_component):
             m = settings.sign_mode_per_component[i]
-            label = "Linked (+/− same magnitude, opposite sign)" if m == SignMode.LINKED else "Individual (separate + and − Kt)"
+            label = (
+                "Linked (+/− same magnitude, opposite sign)"
+                if m == SignMode.LINKED
+                else "Individual (separate + and − Kt)"
+            )
             rows.append(f"<tr><td>{comp}</td><td>{label}</td></tr>")
-    return "<table class=\"report-table\"><thead><tr><th>Component</th><th>Sign mode</th></tr></thead><tbody>" + "\n".join(rows) + "</tbody></table>"
+    return (
+        '<table class="report-table"><thead><tr><th>Component</th><th>Sign mode</th></tr></thead><tbody>'
+        + "\n".join(rows)
+        + "</tbody></table>"
+    )
 
 
 def _settings_section_html(result: SolverResult, settings: SolverSettings) -> str:
@@ -44,16 +52,18 @@ def _settings_section_html(result: SolverResult, settings: SolverSettings) -> st
 def _kt_table_html(result: SolverResult) -> str:
     """Kt values as a styled table with component grouping and clear formatting."""
     if not result.kt_names or not result.kt_values:
-        return "<p class=\"muted\">No Kt values.</p>"
+        return '<p class="muted">No Kt values.</p>'
     rows = []
     for name, value in zip(result.kt_names, result.kt_values):
         # Highlight +/- pairs for readability
         cell_class = ""
         if name.endswith("+") or name.endswith("-"):
             cell_class = ' class="kt-signed"'
-        rows.append(f"<tr><td{cell_class}>{name}</td><td class=\"num\">{value:.6f}</td></tr>")
+        rows.append(
+            f'<tr><td{cell_class}>{name}</td><td class="num">{value:.6f}</td></tr>'
+        )
     return (
-        "<table class=\"report-table kt-table\">"
+        '<table class="report-table kt-table">'
         "<thead><tr><th>Kt</th><th>Value</th></tr></thead>"
         "<tbody>" + "\n".join(rows) + "</tbody></table>"
     )

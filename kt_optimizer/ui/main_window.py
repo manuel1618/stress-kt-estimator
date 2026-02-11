@@ -122,6 +122,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(panel)
 
         self.use_sign = QCheckBox("Use separate + / - for directions")
+        self.use_sign.setChecked(True)
         self.use_sign.toggled.connect(self._on_use_sign_toggled)
 
         # Container for per-direction dropdowns; visible only when use_sign is checked
@@ -136,7 +137,7 @@ class MainWindow(QMainWindow):
             combo.setCurrentIndex(0)
             self.sign_mode_combo[comp] = combo
             sign_form.addRow(f"{comp}:", combo)
-        self.sign_mode_widget.setVisible(False)
+        self.sign_mode_widget.setVisible(True)
         layout.addWidget(self.use_sign)
         layout.addWidget(self.sign_mode_widget)
 

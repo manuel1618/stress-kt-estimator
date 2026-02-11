@@ -23,7 +23,9 @@ def build_logger(name: str = "kt_optimizer") -> logging.Logger:
     return logger
 
 
-def attach_gui_handler(logger: logging.Logger, callback: Callable[[str], None]) -> GuiLogHandler:
+def attach_gui_handler(
+    logger: logging.Logger, callback: Callable[[str], None]
+) -> GuiLogHandler:
     handler = GuiLogHandler(callback)
     handler.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
     logger.addHandler(handler)
