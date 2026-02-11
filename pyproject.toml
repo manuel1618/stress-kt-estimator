@@ -17,7 +17,7 @@ dependencies = [
   "weasyprint>=61",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
   "pytest>=8.0",
 ]

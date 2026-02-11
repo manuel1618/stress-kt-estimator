@@ -92,9 +92,8 @@ class MainWindow(QMainWindow):
 
         self.use_sign = QCheckBox("Use separate Kt for + / - direction")
         self.objective = QComboBox()
-        self.objective.addItem("Minimize sum(Kt)", ObjectiveMode.MIN_SUM_KT)
-        self.objective.addItem("Least squares conservative", ObjectiveMode.LEAST_SQUARES_CONSERVATIVE)
-        self.objective.addItem("Minimize max deviation", ObjectiveMode.MINIMIZE_MAX_DEVIATION)
+        self.objective.addItem("Minimize max deviation (recommended)", ObjectiveMode.MINIMIZE_MAX_DEVIATION)
+        self.objective.setEnabled(False)
 
         self.safety_factor = QLineEdit("1.0")
         self.nonnegative = QCheckBox("Enforce Kt >= 0")
@@ -152,5 +151,9 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, "Generate report", str(Path.cwd() / "kt_report.pdf"), "PDF (*.pdf);;HTML (*.html)")
         if not path:
             return
-        out = generate_report(self.table_model.df, self.last_result, self._settings(), path)
+        try:
+            out = generate_report(self.table_model.df, self.last_result, self._settings(), path)
+        except Exception as exc:
+            QMessageBox.critical(self, "Report generation failed", str(exc))
+            return
         QMessageBox.information(self, "Report generated", f"Wrote report to {out}")

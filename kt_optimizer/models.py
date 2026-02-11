@@ -8,8 +8,6 @@ import pandas as pd
 
 
 class ObjectiveMode(str, Enum):
-    MIN_SUM_KT = "min_sum_kt"
-    LEAST_SQUARES_CONSERVATIVE = "least_squares_conservative"
     MINIMIZE_MAX_DEVIATION = "minimize_max_deviation"
 
 
@@ -28,7 +26,7 @@ class LoadCase:
 @dataclass(slots=True)
 class SolverSettings:
     use_separate_sign: bool = False
-    objective_mode: ObjectiveMode = ObjectiveMode.MIN_SUM_KT
+    objective_mode: ObjectiveMode = ObjectiveMode.MINIMIZE_MAX_DEVIATION
     safety_factor: float = 1.0
     enforce_nonnegative_kt: bool = True
 
