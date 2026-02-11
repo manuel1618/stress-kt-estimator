@@ -1,0 +1,25 @@
+version: "3"
+
+vars:
+  APP_MODULE: kt_optimizer.main
+
+tasks:
+  default:
+    desc: show available tasks
+    cmds:
+      - task --list
+
+  gui:
+    desc: start the Kt optimizer GUI
+    cmds:
+      - uv run python -m {{.APP_MODULE}}
+
+  sync:
+    desc: install/sync dependencies with uv
+    cmds:
+      - uv sync
+
+  test:
+    desc: run tests
+    cmds:
+      - uv run pytest tests/ -v
