@@ -6,7 +6,9 @@ from pathlib import Path
 from kt_optimizer.models import SolverResult, SolverSettings
 
 
-def _render_html(result: SolverResult, settings: SolverSettings, load_cases_html: str, kt_html: str) -> str:
+def _render_html(
+    result: SolverResult, settings: SolverSettings, load_cases_html: str, kt_html: str
+) -> str:
     rows = "\n".join(
         f"<tr><td>{c.case_name}</td><td>{c.actual:.3f}</td><td>{c.predicted:.3f}</td><td>{c.margin_pct:+.2f}%</td></tr>"
         for c in result.per_case
@@ -30,7 +32,7 @@ th:first-child, td:first-child {{ text-align: left; }}
 <ul>
 <li>Success: {result.success}</li>
 <li>Message: {result.message}</li>
-<li>Objective: {settings.objective_mode.value}</li>
+<li>Objective: {getattr(settings.objective_mode, 'value', settings.objective_mode)}</li>
 <li>Safety factor: {settings.safety_factor}</li>
 <li>Separate +/- mode: {settings.use_separate_sign}</li>
 </ul>
@@ -57,7 +59,9 @@ th:first-child, td:first-child {{ text-align: left; }}
 """
 
 
-def generate_report(load_cases_df, result: SolverResult, settings: SolverSettings, out_path: str | Path) -> Path:
+def generate_report(
+    load_cases_df, result: SolverResult, settings: SolverSettings, out_path: str | Path
+) -> Path:
     out_path = Path(out_path)
     load_cases_html = load_cases_df.to_html(index=False)
     kt_html = result.to_kt_dataframe().to_html(index=False)

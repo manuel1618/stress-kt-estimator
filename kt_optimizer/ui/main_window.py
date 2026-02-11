@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QPlainTextEdit,
+    QSizePolicy,
     QSplitter,
     QTableView,
     QVBoxLayout,
@@ -41,6 +42,8 @@ class MainWindow(QMainWindow):
         self.table_model = LoadCaseTableModel()
         self.table = QTableView()
         self.table.setModel(self.table_model)
+        self.table.setMinimumHeight(100)
+        self.table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         add_btn = QPushButton("Add Row")
         del_btn = QPushButton("Delete Row")
@@ -51,20 +54,29 @@ class MainWindow(QMainWindow):
         for b in [add_btn, del_btn, load_btn, save_btn]:
             top_buttons.addWidget(b)
 
+        # Input matrix section: toolbar + table, in a frame so it’s one logical block
+        input_section = QWidget()
+        input_layout = QVBoxLayout(input_section)
+        input_layout.setContentsMargins(0, 0, 0, 0)
+        input_layout.addLayout(top_buttons)
+        input_layout.addWidget(self.table)
+
         self.settings_panel = self._build_settings_panel()
         self.results_panel = ResultPanel()
         self.log_panel = QPlainTextEdit()
         self.log_panel.setReadOnly(True)
+        self.log_panel.setMaximumHeight(180)
         attach_gui_handler(self.logger, self.log_panel.appendPlainText)
 
         right_split = QSplitter(Qt.Vertical)
         right_split.addWidget(self.results_panel)
         right_split.addWidget(self.log_panel)
+        right_split.setSizes([340, 180])
 
         mid_split = QSplitter(Qt.Horizontal)
         mid_split.addWidget(self.settings_panel)
         mid_split.addWidget(right_split)
-        mid_split.setSizes([300, 700])
+        mid_split.setSizes([260, 500])
 
         actions = QHBoxLayout()
         self.solve_btn = QPushButton("Solve")
@@ -72,10 +84,25 @@ class MainWindow(QMainWindow):
         actions.addWidget(self.report_btn)
         actions.addWidget(self.solve_btn)
 
-        root_layout.addLayout(top_buttons)
-        root_layout.addWidget(self.table)
-        root_layout.addWidget(mid_split)
-        root_layout.addLayout(actions)
+        bottom_section = QWidget()
+        bottom_layout = QVBoxLayout(bottom_section)
+        bottom_layout.setContentsMargins(0, 0, 0, 0)
+        bottom_layout.addWidget(mid_split)
+        bottom_layout.addLayout(actions)
+        bottom_section.setMinimumHeight(260)
+
+        # Main vertical splitter: input matrix gets more space and can be resized
+        main_split = QSplitter(Qt.Vertical)
+        main_split.addWidget(input_section)
+        main_split.addWidget(bottom_section)
+        main_split.setSizes([420, 380])  # table area larger by default
+        main_split.setStretchFactor(
+            0, 2
+        )  # input section grows 2x when window is resized
+        main_split.setStretchFactor(1, 1)
+        main_split.setChildrenCollapsible(False)
+
+        root_layout.addWidget(main_split)
 
         add_btn.clicked.connect(self.table_model.add_row)
         del_btn.clicked.connect(self._delete_selected)
@@ -92,7 +119,9 @@ class MainWindow(QMainWindow):
 
         self.use_sign = QCheckBox("Use separate Kt for + / - direction")
         self.objective = QComboBox()
-        self.objective.addItem("Minimize max deviation (recommended)", ObjectiveMode.MINIMIZE_MAX_DEVIATION)
+        self.objective.addItem(
+            "Minimize max deviation (recommended)", ObjectiveMode.MINIMIZE_MAX_DEVIATION
+        )
         self.objective.setEnabled(False)
 
         self.safety_factor = QLineEdit("1.0")
@@ -110,9 +139,13 @@ class MainWindow(QMainWindow):
         return panel
 
     def _settings(self) -> SolverSettings:
+        data = self.objective.currentData()
+        objective_mode = (
+            data if isinstance(data, ObjectiveMode) else ObjectiveMode(data)
+        )
         return SolverSettings(
             use_separate_sign=self.use_sign.isChecked(),
-            objective_mode=self.objective.currentData(),
+            objective_mode=objective_mode,
             safety_factor=float(self.safety_factor.text()),
             enforce_nonnegative_kt=self.nonnegative.isChecked(),
         )
@@ -122,12 +155,16 @@ class MainWindow(QMainWindow):
         self.table_model.remove_row(idx.row())
 
     def _load_csv(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Load CSV", str(Path.cwd()), "CSV (*.csv)")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load CSV", str(Path.cwd()), "CSV (*.csv)"
+        )
         if path:
             self.table_model.load_csv(path)
 
     def _save_csv(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, "Save CSV", str(Path.cwd() / "load_cases.csv"), "CSV (*.csv)")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save CSV", str(Path.cwd() / "load_cases.csv"), "CSV (*.csv)"
+        )
         if path:
             self.table_model.save_csv(path)
 
@@ -146,13 +183,22 @@ class MainWindow(QMainWindow):
 
     def _report(self) -> None:
         if self.last_result is None:
-            QMessageBox.information(self, "No results", "Solve first before generating report")
+            QMessageBox.information(
+                self, "No results", "Solve first before generating report"
+            )
             return
-        path, _ = QFileDialog.getSaveFileName(self, "Generate report", str(Path.cwd() / "kt_report.pdf"), "PDF (*.pdf);;HTML (*.html)")
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Generate report",
+            str(Path.cwd() / "kt_report.pdf"),
+            "PDF (*.pdf);;HTML (*.html)",
+        )
         if not path:
             return
         try:
-            out = generate_report(self.table_model.df, self.last_result, self._settings(), path)
+            out = generate_report(
+                self.table_model.df, self.last_result, self._settings(), path
+            )
         except Exception as exc:
             QMessageBox.critical(self, "Report generation failed", str(exc))
             return

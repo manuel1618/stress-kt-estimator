@@ -15,6 +15,7 @@ dependencies = [
   "matplotlib>=3.8",
   "PySide6>=6.6",
   "weasyprint>=61",
+  "xhtml2pdf>=0.2.13",
 ]
 
 [dependency-groups]

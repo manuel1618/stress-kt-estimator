@@ -18,7 +18,9 @@ def _sample_df():
 
 def test_minmax_mode_solution():
     df = _sample_df()
-    settings = SolverSettings(use_separate_sign=True, objective_mode=ObjectiveMode.MINIMIZE_MAX_DEVIATION)
+    settings = SolverSettings(
+        use_separate_sign=True, objective_mode=ObjectiveMode.MINIMIZE_MAX_DEVIATION
+    )
     result = solve(df, settings)
     assert result.success
     assert result.min_error >= -1e-6

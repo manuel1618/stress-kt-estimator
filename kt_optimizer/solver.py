@@ -6,7 +6,13 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import linprog
 
-from kt_optimizer.models import FORCE_COLUMNS, SolverResult, SolverSettings, TABLE_COLUMNS, ValidationCase
+from kt_optimizer.models import (
+    FORCE_COLUMNS,
+    SolverResult,
+    SolverSettings,
+    TABLE_COLUMNS,
+    ValidationCase,
+)
 
 
 def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -87,13 +93,17 @@ def _solve_min_max_deviation(f_mat, sigma, settings: SolverSettings):
     return True, str(res.message), res.x[:-1]
 
 
-def solve(df: pd.DataFrame, settings: SolverSettings, logger: logging.Logger | None = None) -> SolverResult:
+def solve(
+    df: pd.DataFrame, settings: SolverSettings, logger: logging.Logger | None = None
+) -> SolverResult:
     logger = logger or logging.getLogger("kt_optimizer")
     normalized = _normalize_columns(df)
 
     logger.info("Parsed %d load cases", len(normalized))
     if normalized.empty:
-        return SolverResult(success=False, message="No valid load cases with Stress provided")
+        return SolverResult(
+            success=False, message="No valid load cases with Stress provided"
+        )
 
     f_mat, kt_names = _build_force_matrix(normalized, settings.use_separate_sign)
     sigma = normalized["Stress"].to_numpy(dtype=float).copy()
@@ -106,7 +116,11 @@ def solve(df: pd.DataFrame, settings: SolverSettings, logger: logging.Logger | N
     if settings.use_separate_sign:
         logger.info("Using separate + / - formulation")
 
-    logger.info("Solving min-max deviation LP (%d constraints, %d variables)", f_mat.shape[0], f_mat.shape[1] + 1)
+    logger.info(
+        "Solving min-max deviation LP (%d constraints, %d variables)",
+        f_mat.shape[0],
+        f_mat.shape[1] + 1,
+    )
     success, message, k = _solve_min_max_deviation(f_mat, sigma, settings)
 
     sigma_pred = f_mat @ k
@@ -116,7 +130,9 @@ def solve(df: pd.DataFrame, settings: SolverSettings, logger: logging.Logger | N
     rms_error = float(np.sqrt(np.mean(np.square(error))))
 
     with np.errstate(divide="ignore", invalid="ignore"):
-        margin_pct = np.where(sigma != 0, (sigma_pred - sigma) / np.abs(sigma) * 100.0, np.nan)
+        margin_pct = np.where(
+            sigma != 0, (sigma_pred - sigma) / np.abs(sigma) * 100.0, np.nan
+        )
 
     per_case: list[ValidationCase] = []
     for row_idx, row in normalized.iterrows():
@@ -170,6 +186,10 @@ def solve(df: pd.DataFrame, settings: SolverSettings, logger: logging.Logger | N
         max_underprediction=float(np.min(error)),
         condition_number=cond_number,
         sensitivity_violations=sensitivity_violations,
-        diagnostics={"objective": settings.objective_mode.value},
+        diagnostics={
+            "objective": getattr(
+                settings.objective_mode, "value", settings.objective_mode
+            )
+        },
         per_case=per_case,
     )
