@@ -40,7 +40,6 @@ class SolverSettings:
     """Length 6, order Fx,Fy,Fz,Mx,My,Mz. Used only when use_separate_sign is True."""
     objective_mode: ObjectiveMode = ObjectiveMode.MINIMIZE_MAX_DEVIATION
     safety_factor: float = 1.0
-    enforce_nonnegative_kt: bool = True
 
 
 @dataclass(slots=True)
@@ -97,15 +96,31 @@ CANONICAL_KT_ORDER = [
 def expand_kt_to_canonical(
     kt_names: list[str], kt_values: list[float]
 ) -> tuple[list[str], list[float]]:
-    """Return KT names and values in canonical order, always 12 entries.
-    Linked components (single 'Fx' etc.) are duplicated for both + and - slots.
+    """Return Kt names and values in canonical order, always 12 entries.
+
+    For display/export, we treat Kt as a magnitude per direction and encode the sign
+    convention into the +/- slots:
+
+    - ``Fx+`` / ``Fy+`` / ... are always non-negative (``abs`` of the underlying Kt).
+    - ``Fx-`` / ``Fy-`` / ... are always non-positive (``-abs`` of the underlying Kt).
+
+    The underlying solver variables may be signed or unsigned depending on the model,
+    but this helper ensures a consistent visual convention where negative directions
+    always show negative Kt values.
     """
     name_to_val = dict(zip(kt_names, kt_values))
     values_out: list[float] = []
     for name in CANONICAL_KT_ORDER:
         if name in name_to_val:
-            values_out.append(name_to_val[name])
+            raw = name_to_val[name]
         else:
             base = name[:-1]  # "Fx+" -> "Fx", "Fx-" -> "Fx"
-            values_out.append(name_to_val[base])
+            raw = name_to_val[base]
+
+        if name.endswith("+"):
+            values_out.append(abs(raw))
+        elif name.endswith("-"):
+            values_out.append(-abs(raw))
+        else:
+            values_out.append(raw)
     return list(CANONICAL_KT_ORDER), values_out

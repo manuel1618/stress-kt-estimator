@@ -94,7 +94,6 @@ def test_find_minimal_unlink_returns_valid_config():
         use_separate_sign=True,
         objective_mode=ObjectiveMode.MINIMIZE_MAX_DEVIATION,
         safety_factor=1.0,
-        enforce_nonnegative_kt=True,
     )
     modes, result = find_minimal_unlink(
         df, base, max_underprediction_tol=-0.01, max_rms_error=1.0
@@ -107,3 +106,52 @@ def test_find_minimal_unlink_returns_valid_config():
     assert result is not None
     assert result.success
     assert len(unlinked) <= 6
+
+
+def test_negative_kt_values_propagate_when_unconstrained():
+    """Canonical Kt slots respect the +/- sign convention for directions."""
+    # Construct a simple case with negative Fx and positive stress so that the best-fit
+    # Kt magnitude is positive but the physical "signed" Kt for the negative direction
+    # should appear with a negative sign.
+    df = pd.DataFrame(
+        [
+            ["LC1", -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+            ["LC2", -2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0],
+        ],
+        columns=TABLE_COLUMNS,
+    )
+    settings = SolverSettings(
+        use_separate_sign=False,
+        objective_mode=ObjectiveMode.MINIMIZE_MAX_DEVIATION,
+        safety_factor=1.0,
+    )
+    result = solve(df, settings)
+    assert result.success
+    # Canonical names always include Fx+ and Fx-.
+    assert "Fx+" in result.kt_names and "Fx-" in result.kt_names
+    fx_plus_idx = result.kt_names.index("Fx+")
+    fx_minus_idx = result.kt_names.index("Fx-")
+    fx_plus_val = result.kt_values[fx_plus_idx]
+    fx_minus_val = result.kt_values[fx_minus_idx]
+    # By convention, "+" slots are non-negative magnitudes, "-" slots are non-positive.
+    assert fx_plus_val >= 0.0
+    assert fx_minus_val <= 0.0
+
+
+def test_constraint_status_strongly_under_constrained():
+    """Very few load cases relative to variables should be flagged as strongly under-constrained."""
+    # Default settings: 6 Kt variables (Fx..Mz), but only 2 load cases here.
+    df = pd.DataFrame(
+        [
+            ["LC1", 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+            ["LC2", 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+        ],
+        columns=TABLE_COLUMNS,
+    )
+    settings = SolverSettings(
+        use_separate_sign=False,
+        objective_mode=ObjectiveMode.MINIMIZE_MAX_DEVIATION,
+        safety_factor=1.0,
+    )
+    result = solve(df, settings)
+    assert result.diagnostics.get("constraint_status") == "strongly_under_constrained"

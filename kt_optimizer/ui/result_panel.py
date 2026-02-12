@@ -32,11 +32,43 @@ class ResultPanel(QWidget):
         layout.addWidget(self.canvas)
 
     def update_result(self, result: SolverResult) -> None:
-        self.summary.setText(
+        summary_base = (
             f"Worst margin: {result.worst_case_margin:+.3f}% | "
             f"Max over: {result.max_overprediction:.4f} | "
             f"Max under: {result.max_underprediction:.4f}"
         )
+
+        warnings: list[str] = []
+        status = (
+            result.diagnostics.get("constraint_status") if result.diagnostics else None
+        )
+        if status in {
+            "under_constrained",
+            "strongly_under_constrained",
+            "over_constrained_or_infeasible",
+        }:
+            if status == "strongly_under_constrained":
+                txt = "system strongly under-constrained"
+            elif status == "under_constrained":
+                txt = "system under-constrained"
+            else:
+                txt = "system over-constrained / possibly infeasible"
+            warnings.append(txt)
+
+        if result.diagnostics and result.diagnostics.get("signed_kt_inconsistent"):
+            warnings.append(
+                "signed-Kt interpretation may produce negative stress for some cases"
+            )
+
+        if warnings:
+            warning_html = " | ".join(
+                f'<span style="color:red;">WARNING: {w}</span>' for w in warnings
+            )
+            summary = f"{summary_base} | {warning_html}"
+        else:
+            summary = summary_base
+
+        self.summary.setText(summary)
         self.kt_table.setColumnCount(len(result.kt_names))
         self.kt_table.setHorizontalHeaderLabels(result.kt_names)
         for col, value in enumerate(result.kt_values):

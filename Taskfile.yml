@@ -29,7 +29,6 @@ tasks:
     cmds:
       - uv sync --group dev
       - uv run python -m PyInstaller kt_optimizer.spec --distpath dist --workpath build
-      - echo "Exe: dist/kt-optimizer.exe"
 
   lint:
     desc: lint code with ruff

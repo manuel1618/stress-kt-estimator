@@ -87,9 +87,8 @@ def _build_force_matrix(df: pd.DataFrame, settings: SolverSettings):
     return np.hstack(cols_list), names
 
 
-def _build_bounds(n_vars: int, enforce_nonnegative: bool):
-    if enforce_nonnegative:
-        return [(0.0, None)] * n_vars
+def _build_bounds(n_vars: int):
+    # No nonnegativity constraint on Kt: allow signed values.
     return [(None, None)] * n_vars
 
 
@@ -107,12 +106,73 @@ def _solve_min_max_deviation(f_mat, sigma, settings: SolverSettings):
 
     A_ub = np.vstack([A1, A2])
     b_ub = np.concatenate([b1, b2])
-    bounds = _build_bounds(n, settings.enforce_nonnegative_kt) + [(0.0, None)]
+    bounds = _build_bounds(n) + [(0.0, None)]
 
     res = linprog(c=c, A_ub=A_ub, b_ub=b_ub, bounds=bounds, method="highs")
     if not res.success:
         return False, res.message, np.zeros(n)
     return True, str(res.message), res.x[:-1]
+
+
+def _signed_kt_sigma(
+    normalized: pd.DataFrame,
+    sigma: np.ndarray,
+    settings: SolverSettings,
+    kt_names_canonical: list[str],
+    kt_values_canonical: list[float],
+) -> tuple[np.ndarray, bool]:
+    """Compute stresses using a signed-Kt interpretation and flag sign inconsistencies.
+
+    The model assumed here is:
+
+        sigma_signed ≈ sum_j (Kt_j_sign * F_j_signed)
+
+    where, for each base component (Fx..Mz):
+    - In INDIVIDUAL mode, Kt+ is used when the force is >= 0, Kt- when force < 0.
+    - In LINKED / non-separate mode, a single Kt per component is used.
+
+    Returns (sigma_signed, inconsistent), where ``inconsistent`` is True when sigma_signed
+    and the actual sigma disagree in sign for any load case (beyond a small tolerance).
+    """
+    forces = normalized[FORCE_COLUMNS].to_numpy(dtype=float)
+    kt_map = dict(zip(kt_names_canonical, kt_values_canonical))
+
+    # Normalise modes similarly to _build_force_matrix
+    modes = settings.sign_mode_per_component
+    if modes is None or len(modes) != len(FORCE_COLUMNS):
+        modes = [SignMode.INDIVIDUAL] * len(FORCE_COLUMNS)
+
+    sigma_signed = np.zeros(len(normalized), dtype=float)
+    for row_idx in range(forces.shape[0]):
+        s = 0.0
+        for i, comp in enumerate(FORCE_COLUMNS):
+            fval = forces[row_idx, i]
+            if abs(fval) <= 1e-12:
+                continue
+
+            if settings.use_separate_sign and modes and i < len(modes) and modes[i] == SignMode.INDIVIDUAL:
+                # Use per-sign Kt for this component.
+                if fval >= 0.0:
+                    k_name = f"{comp}+"
+                else:
+                    k_name = f"{comp}-"
+                k_val = kt_map.get(k_name, 0.0)
+            else:
+                # Linked or non-separate: one Kt per component.
+                # Prefer the base name, fall back to the canonical "+"" slot.
+                if comp in kt_map:
+                    k_val = kt_map[comp]
+                else:
+                    k_val = kt_map.get(f"{comp}+", 0.0)
+            s += k_val * fval
+        sigma_signed[row_idx] = s
+
+    # Flag rows where the signed-Kt model would flip the stress sign
+    prod = sigma_signed * sigma
+    # Only consider cases where both are meaningfully non-zero.
+    mask = (np.abs(sigma_signed) > 1e-8) & (np.abs(sigma) > 1e-8)
+    inconsistent = bool(np.any(prod[mask] < -1e-6))
+    return sigma_signed, inconsistent
 
 
 def suggest_unlink_from_data(
@@ -208,7 +268,6 @@ def find_minimal_unlink(
         sign_mode_per_component=None,
         objective_mode=base_settings.objective_mode,
         safety_factor=base_settings.safety_factor,
-        enforce_nonnegative_kt=base_settings.enforce_nonnegative_kt,
     )
     n = len(FORCE_COLUMNS)
     best_result: SolverResult | None = None
@@ -267,6 +326,33 @@ def solve(
     sigma = normalized["Stress"].to_numpy(dtype=float).copy()
     logger.info("Building force matrix (%dx%d)", f_mat.shape[0], f_mat.shape[1])
 
+    # Basic geometry diagnostics of the system: number of load cases, variables, rank.
+    n_cases, n_vars = f_mat.shape
+    rank = int(np.linalg.matrix_rank(f_mat)) if f_mat.size else 0
+    logger.info("Force matrix rank %d (cases=%d, variables=%d)", rank, n_cases, n_vars)
+
+    # Classify constraints before the solve; this may be refined after we see residuals.
+    constraint_status = "well_determined"
+    constraint_note_parts: list[str] = []
+    if n_cases < n_vars:
+        constraint_status = "strongly_under_constrained"
+        constraint_note_parts.append(
+            f"fewer load cases than Kt variables (cases={n_cases}, vars={n_vars})"
+        )
+        logger.warning(
+            "System is strongly under-constrained: %d load cases, %d variables",
+            n_cases,
+            n_vars,
+        )
+    elif rank < n_vars:
+        constraint_status = "under_constrained"
+        constraint_note_parts.append(
+            f"force matrix rank too low (rank={rank}, vars={n_vars})"
+        )
+        logger.warning(
+            "System is under-constrained: rank=%d < variables=%d", rank, n_vars
+        )
+
     if settings.safety_factor <= 0:
         return SolverResult(success=False, message="Safety factor must be > 0")
     sigma *= float(settings.safety_factor)
@@ -320,7 +406,8 @@ def solve(
         )
 
     cond_number = float(np.linalg.cond(f_mat)) if f_mat.size else 0.0
-    if cond_number > 1e6:
+    ill_conditioned = cond_number > 1e6
+    if ill_conditioned:
         logger.warning("Force matrix condition number is high: %.3e", cond_number)
 
     sensitivity_violations = 0
@@ -334,12 +421,43 @@ def solve(
         logger.info("All load cases satisfied conservatively")
     elif success:
         logger.warning("Optimization succeeded but conservative check failed")
+        if constraint_status == "well_determined":
+            constraint_status = "over_constrained_or_infeasible"
+            constraint_note_parts.append(
+                "optimization succeeded but conservative feasibility check failed"
+            )
     else:
         logger.error("Optimization failed: %s", message)
+        if constraint_status == "well_determined":
+            constraint_status = "over_constrained_or_infeasible"
+            constraint_note_parts.append("LP solver reported failure")
+
+    constraint_note = " | ".join(constraint_note_parts) if constraint_note_parts else ""
+    if constraint_note:
+        message = f"{message} | {constraint_note}"
 
     kt_names_canonical, kt_values_canonical = expand_kt_to_canonical(
         kt_names, k.tolist()
     )
+
+    # Optional diagnostic: if the user interprets Kt as a signed stiffness multiplying
+    # the signed forces directly, warn when that interpretation would produce negative
+    # stress for some load cases while the actual stress is positive (or vice versa).
+    sigma_signed, signed_inconsistent = _signed_kt_sigma(
+        normalized, sigma, settings, kt_names_canonical, kt_values_canonical
+    )
+    signed_note = ""
+    if signed_inconsistent:
+        signed_note = (
+            "signed-Kt interpretation would flip the sign of stress for at least one "
+            "load case; consider disabling 'Enforce Kt ≥ 0' or revisiting sign settings"
+        )
+        logger.warning("Signed-Kt consistency check failed: %s", signed_note)
+        if constraint_note:
+            message = f"{message} | {signed_note}"
+        else:
+            message = f"{message} | {signed_note}"
+
     return SolverResult(
         success=bool(success),
         message=str(message),
@@ -358,7 +476,14 @@ def solve(
         diagnostics={
             "objective": getattr(
                 settings.objective_mode, "value", settings.objective_mode
-            )
+            ),
+            "n_load_cases": n_cases,
+            "n_kt_variables": n_vars,
+            "rank": rank,
+            "constraint_status": constraint_status,
+            "constraint_status_note": constraint_note,
+            "ill_conditioned": ill_conditioned,
+            "signed_kt_inconsistent": signed_inconsistent,
         },
         per_case=per_case,
     )

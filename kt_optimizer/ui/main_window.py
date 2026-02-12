@@ -148,14 +148,11 @@ class MainWindow(QMainWindow):
         self.objective.setEnabled(False)
 
         self.safety_factor = QLineEdit("1.0")
-        self.nonnegative = QCheckBox("Enforce Kt >= 0")
-        self.nonnegative.setChecked(True)
 
         layout.addWidget(QLabel("Objective mode"))
         layout.addWidget(self.objective)
         layout.addWidget(QLabel("Safety factor"))
         layout.addWidget(self.safety_factor)
-        layout.addWidget(self.nonnegative)
         layout.addStretch(1)
 
         return panel
@@ -180,7 +177,6 @@ class MainWindow(QMainWindow):
             sign_mode_per_component=sign_modes,
             objective_mode=objective_mode,
             safety_factor=float(self.safety_factor.text()),
-            enforce_nonnegative_kt=self.nonnegative.isChecked(),
         )
 
     def _delete_selected(self) -> None:
@@ -200,6 +196,46 @@ class MainWindow(QMainWindow):
         )
         if path:
             self.table_model.save_csv(path)
+
+    def _show_constraint_warning(self, result) -> None:
+        """Show a prominent warning dialog when the solver reports constraint issues."""
+        if not result or not getattr(result, "diagnostics", None):
+            return
+
+        status = result.diagnostics.get("constraint_status")
+        if status not in {
+            "under_constrained",
+            "strongly_under_constrained",
+            "over_constrained_or_infeasible",
+        }:
+            return
+
+        if status == "strongly_under_constrained":
+            title = "Strongly under-constrained system"
+            body = (
+                "The load case setup is strongly under-constrained:\n"
+                "there are fewer independent load cases than Kt variables.\n\n"
+                "Results may not be unique or reliable."
+            )
+        elif status == "under_constrained":
+            title = "Under-constrained system"
+            body = (
+                "The load case setup is under-constrained:\n"
+                "the force matrix rank is lower than the number of Kt variables.\n\n"
+                "Results may not be unique or reliable."
+            )
+        else:
+            title = "Over-constrained / infeasible system"
+            body = (
+                "The optimization indicates an over-constrained or possibly infeasible setup.\n\n"
+                "Check your load cases and constraints; a consistent solution may not exist."
+            )
+
+        note = result.diagnostics.get("constraint_status_note")
+        if note:
+            body += f"\n\nDetails: {note}"
+
+        QMessageBox.warning(self, title, body)
 
     def _suggest_unlink(self) -> None:
         try:
@@ -252,6 +288,8 @@ class MainWindow(QMainWindow):
                     else ""
                 ),
             )
+            # If the underlying solve is under/over-constrained, surface that as well.
+            self._show_constraint_warning(result)
         else:
             msg = result.message if result else "No result"
             self.logger.warning("Minimal unlink could not meet tolerance: %s", msg)
@@ -264,6 +302,8 @@ class MainWindow(QMainWindow):
                 f"Applied unlink for: {', '.join(unlinked) or 'none'}.\n"
                 f"Solve did not meet tolerance: {msg}",
             )
+            # Even when tolerance is not met, still show detailed constraint diagnostics.
+            self._show_constraint_warning(result)
 
     def _solve(self) -> None:
         try:
@@ -275,8 +315,13 @@ class MainWindow(QMainWindow):
         result = solve(self.table_model.df, settings=settings, logger=self.logger)
         self.last_result = result
         self.results_panel.update_result(result)
+
         if not result.success:
             QMessageBox.warning(self, "Solve failed", result.message)
+            return
+
+        # Surface constraint issues very prominently so they are hard to miss.
+        self._show_constraint_warning(result)
 
     def _export_excel(self) -> None:
         if self.last_result is None:

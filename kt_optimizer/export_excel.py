@@ -11,6 +11,8 @@ from kt_optimizer.models import (
     SignMode,
     SolverResult,
     SolverSettings,
+    CANONICAL_KT_ORDER,
+    expand_kt_to_canonical,
 )
 
 
@@ -35,7 +37,6 @@ def export_to_excel(
         ["Message", result.message],
         ["Objective", str(objective)],
         ["Safety factor", str(settings.safety_factor)],
-        ["Enforce Kt ≥ 0", str(settings.enforce_nonnegative_kt)],
         ["Separate +/− for directions", str(settings.use_separate_sign)],
         [],
         ["Worst-case margin (%)", f"{result.worst_case_margin:.4f}"],
@@ -45,6 +46,20 @@ def export_to_excel(
         ["Condition number", f"{result.condition_number:.3e}"],
         ["Sensitivity violations", str(result.sensitivity_violations)],
     ]
+    constraint_status = result.diagnostics.get("constraint_status")
+    if constraint_status:
+        rows.append(["Constraint status", constraint_status])
+        note = result.diagnostics.get("constraint_status_note")
+        if note:
+            rows.append(["Constraint note", note])
+    signed_inconsistent = result.diagnostics.get("signed_kt_inconsistent")
+    if signed_inconsistent is not None:
+        rows.append(
+            [
+                "Signed-Kt interpretation inconsistent",
+                str(bool(signed_inconsistent)),
+            ]
+        )
     if settings.use_separate_sign and settings.sign_mode_per_component:
         rows.append([])
         rows.append(["Component", "Sign mode"])
@@ -62,8 +77,22 @@ def export_to_excel(
     rows.append([])
     rows.append([])
     if result.kt_names and result.kt_values:
-        rows.append(list(result.kt_names))
-        rows.append([f"{v:.6f}" for v in result.kt_values])
+        kt_names = list(result.kt_names)
+        kt_values = list(result.kt_values)
+
+        # Be defensive: if the stored names are not already the canonical set,
+        # re-expand so that Fx+, Fx-, ..., Mz- are always present and in order.
+        try:
+            if set(kt_names) != set(CANONICAL_KT_ORDER) or len(kt_names) != len(
+                kt_values
+            ):
+                kt_names, kt_values = expand_kt_to_canonical(kt_names, kt_values)
+        except Exception:
+            # Fall back to whatever we have rather than failing the export.
+            pass
+
+        rows.append(list(kt_names))
+        rows.append([f"{v:.6f}" for v in kt_values])
         rows.append([])
         rows.append([])
     rows.append(["Case", "Actual", "Predicted", "Margin %"])
