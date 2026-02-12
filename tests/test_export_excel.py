@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from kt_optimizer.models import SolverSettings, TABLE_COLUMNS
-from kt_optimizer.solver import solve
 from kt_optimizer.export_excel import export_to_excel
+from kt_optimizer.models import TABLE_COLUMNS, SolverSettings
+from kt_optimizer.solver import solve
 
 
 def test_excel_export_contains_canonical_kt_headers(tmp_path: Path):
@@ -30,4 +30,3 @@ def test_excel_export_contains_canonical_kt_headers(tmp_path: Path):
     # The Kt header row is after the load case table and two blank rows; easiest is
     # to just search for a row that contains "Fx+".
     assert (exported == "Fx+").any().any()
-

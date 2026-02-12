@@ -9,10 +9,10 @@ from scipy.optimize import linprog
 
 from kt_optimizer.models import (
     FORCE_COLUMNS,
+    TABLE_COLUMNS,
     SignMode,
     SolverResult,
     SolverSettings,
-    TABLE_COLUMNS,
     ValidationCase,
     expand_kt_to_canonical,
 )
@@ -150,7 +150,12 @@ def _signed_kt_sigma(
             if abs(fval) <= 1e-12:
                 continue
 
-            if settings.use_separate_sign and modes and i < len(modes) and modes[i] == SignMode.INDIVIDUAL:
+            if (
+                settings.use_separate_sign
+                and modes
+                and i < len(modes)
+                and modes[i] == SignMode.INDIVIDUAL
+            ):
                 # Use per-sign Kt for this component.
                 if fval >= 0.0:
                     k_name = f"{comp}+"

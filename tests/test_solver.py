@@ -4,12 +4,12 @@ import pandas as pd
 
 from kt_optimizer.models import (
     FORCE_COLUMNS,
+    TABLE_COLUMNS,
     ObjectiveMode,
     SignMode,
     SolverSettings,
-    TABLE_COLUMNS,
 )
-from kt_optimizer.solver import find_minimal_unlink, suggest_unlink_from_data, solve
+from kt_optimizer.solver import find_minimal_unlink, solve, suggest_unlink_from_data
 
 
 def _sample_df():

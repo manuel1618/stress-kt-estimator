@@ -13,8 +13,8 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
-    QPushButton,
     QPlainTextEdit,
+    QPushButton,
     QSizePolicy,
     QSplitter,
     QTableView,
@@ -22,10 +22,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from kt_optimizer.export_excel import export_to_excel
 from kt_optimizer.logger import attach_gui_handler, build_logger
 from kt_optimizer.models import FORCE_COLUMNS, ObjectiveMode, SignMode, SolverSettings
-from kt_optimizer.export_excel import export_to_excel
-from kt_optimizer.solver import find_minimal_unlink, suggest_unlink_from_data, solve
+from kt_optimizer.solver import find_minimal_unlink, solve, suggest_unlink_from_data
 from kt_optimizer.ui.result_panel import ResultPanel
 from kt_optimizer.ui.table_model import LoadCaseTableModel
 
