@@ -109,10 +109,13 @@ def test_find_minimal_unlink_returns_valid_config():
 
 
 def test_negative_kt_values_propagate_when_unconstrained():
-    """Canonical Kt slots respect the +/- sign convention for directions."""
-    # Construct a simple case with negative Fx and positive stress so that the best-fit
-    # Kt magnitude is positive but the physical "signed" Kt for the negative direction
-    # should appear with a negative sign.
+    """Canonical Kt slots allow stress reconstruction via Kt_slot × |F|.
+
+    With negative Fx and positive stress the LINKED solver finds k = -1.0.
+    Canonical conversion: Fx+ = k = -1.0, Fx- = -k = 1.0.
+    Reconstruction: Fx+ × |F| gives negative stress (correct for positive F),
+    Fx- × |F| gives positive stress (correct for negative F).
+    """
     df = pd.DataFrame(
         [
             ["LC1", -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
@@ -127,15 +130,18 @@ def test_negative_kt_values_propagate_when_unconstrained():
     )
     result = solve(df, settings)
     assert result.success
-    # Canonical names always include Fx+ and Fx-.
     assert "Fx+" in result.kt_names and "Fx-" in result.kt_names
     fx_plus_idx = result.kt_names.index("Fx+")
     fx_minus_idx = result.kt_names.index("Fx-")
     fx_plus_val = result.kt_values[fx_plus_idx]
     fx_minus_val = result.kt_values[fx_minus_idx]
-    # By convention, "+" slots are non-negative magnitudes, "-" slots are non-positive.
-    assert fx_plus_val >= 0.0
-    assert fx_minus_val <= 0.0
+    # LINKED k = -1: Fx+ = -1 (negative), Fx- = +1 (positive).
+    # Reconstruction: for F < 0 (the only cases here), use Fx- × |F|:
+    #   LC1: 1.0 × 1.0 = 1.0 ✓,  LC2: 1.0 × 2.0 = 2.0 ✓
+    assert fx_plus_val < 0.0  # k is negative
+    assert fx_minus_val > 0.0  # -k is positive
+    assert abs(fx_plus_val - (-1.0)) < 1e-6
+    assert abs(fx_minus_val - 1.0) < 1e-6
 
 
 def test_constraint_status_strongly_under_constrained():

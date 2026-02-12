@@ -102,29 +102,32 @@ def expand_kt_to_canonical(
 ) -> tuple[list[str], list[float]]:
     """Return Kt names and values in canonical order, always 12 entries.
 
-    For display/export, we treat Kt as a magnitude per direction and encode the sign
-    convention into the +/- slots:
+    Convention: each slot represents the stress contribution per unit force
+    **magnitude** in that direction.
 
-    - ``Fx+`` / ``Fy+`` / ... are always non-negative (``abs`` of the underlying Kt).
-    - ``Fx-`` / ``Fy-`` / ... are always non-positive (``-abs`` of the underlying Kt).
+    - For INDIVIDUAL entries (``Fx+`` / ``Fx-`` already in *kt_names*): the
+      solver coefficient is used directly — it already multiplies ``|F|``.
+    - For LINKED entries (only ``Fx`` in *kt_names*): the single coefficient
+      ``k`` multiplies the **signed** force.  Converting to per-magnitude:
+      ``Fx+ = k`` (positive F: ``k × F = k × |F|``) and
+      ``Fx- = -k`` (negative F: ``k × F = k × (-|F|) = (-k) × |F|``).
 
-    The underlying solver variables may be signed or unsigned depending on the model,
-    but this helper ensures a consistent visual convention where negative directions
-    always show negative Kt values.
+    To reconstruct stress from the displayed values: for each load case pick
+    the ``+`` or ``-`` slot depending on force sign, then
+    ``σ_contribution = Kt_slot × |F|``.
     """
     name_to_val = dict(zip(kt_names, kt_values))
     values_out: list[float] = []
     for name in CANONICAL_KT_ORDER:
         if name in name_to_val:
-            raw = name_to_val[name]
+            # INDIVIDUAL / SET: solver coefficient already per-magnitude.
+            values_out.append(name_to_val[name])
         else:
+            # LINKED: single k for signed force; convert to per-magnitude.
             base = name[:-1]  # "Fx+" -> "Fx", "Fx-" -> "Fx"
             raw = name_to_val[base]
-
-        if name.endswith("+"):
-            values_out.append(abs(raw))
-        elif name.endswith("-"):
-            values_out.append(-abs(raw))
-        else:
-            values_out.append(raw)
+            if name.endswith("+"):
+                values_out.append(raw)
+            else:
+                values_out.append(-raw)
     return list(CANONICAL_KT_ORDER), values_out
