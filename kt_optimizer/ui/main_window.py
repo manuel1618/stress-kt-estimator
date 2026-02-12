@@ -3,11 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -45,6 +47,11 @@ class MainWindow(QMainWindow):
         self.table.setModel(self.table_model)
         self.table.setMinimumHeight(100)
         self.table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        # Connect table model signals to update constraint status
+        self.table_model.rowsInserted.connect(self._update_constraint_status)
+        self.table_model.rowsRemoved.connect(self._update_constraint_status)
+        self.table_model.modelReset.connect(self._update_constraint_status)
 
         add_btn = QPushButton("Add Row")
         del_btn = QPushButton("Delete Row")
@@ -117,13 +124,27 @@ class MainWindow(QMainWindow):
 
         self.last_result = None
 
+        # Initialize constraint status
+        self._update_constraint_status()
+
     def _build_settings_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
 
+        # Constraint status indicator at the top
+        self.constraint_status_widget = self._build_constraint_status_widget()
+        layout.addWidget(self.constraint_status_widget)
+
+        # Add separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(separator)
+
         self.use_sign = QCheckBox("Use separate + / - for directions")
         self.use_sign.setChecked(True)
         self.use_sign.toggled.connect(self._on_use_sign_toggled)
+        self.use_sign.toggled.connect(self._update_constraint_status)
 
         # Container for per-direction dropdowns; visible only when use_sign is checked
         self.sign_mode_widget = QWidget()
@@ -164,6 +185,7 @@ class MainWindow(QMainWindow):
                     cb.currentData() == SignMode.SET
                 )
             )
+            combo.currentIndexChanged.connect(self._update_constraint_status)
 
             self.sign_mode_combo[comp] = combo
             self.fixed_kt_edits[comp] = (kt_plus_edit, kt_minus_edit)
@@ -190,6 +212,81 @@ class MainWindow(QMainWindow):
 
     def _on_use_sign_toggled(self, checked: bool) -> None:
         self.sign_mode_widget.setVisible(checked)
+
+    def _build_constraint_status_widget(self) -> QWidget:
+        """Build the live constraint status indicator."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(8, 8, 8, 8)
+
+        title = QLabel("Constraint Status")
+        title_font = QFont()
+        title_font.setBold(True)
+        title.setFont(title_font)
+        layout.addWidget(title)
+
+        # Status label with colored background
+        self.constraint_status_label = QLabel("Unknown")
+        self.constraint_status_label.setAlignment(Qt.AlignCenter)
+        self.constraint_status_label.setStyleSheet(
+            "padding: 6px; border-radius: 3px; background-color: #cccccc;"
+        )
+        layout.addWidget(self.constraint_status_label)
+
+        # Details label
+        self.constraint_details_label = QLabel("No load cases")
+        self.constraint_details_label.setWordWrap(True)
+        self.constraint_details_label.setStyleSheet("color: #666666; font-size: 9pt;")
+        layout.addWidget(self.constraint_details_label)
+
+        return widget
+
+    def _count_design_variables(self) -> int:
+        """Count the number of design variables based on current sign mode settings."""
+        if not self.use_sign.isChecked():
+            # All components use signed (linked) mode
+            return len(FORCE_COLUMNS)
+
+        count = 0
+        for comp in FORCE_COLUMNS:
+            mode = self.sign_mode_combo[comp].currentData()
+            if mode == SignMode.LINKED:
+                count += 1
+            elif mode == SignMode.INDIVIDUAL:
+                count += 2
+            # SET adds 0 variables (user-specified)
+        return count
+
+    def _update_constraint_status(self) -> None:
+        """Update the constraint status indicator based on current load cases and settings."""
+        n_cases = len(self.table_model.df)
+        n_vars = self._count_design_variables()
+
+        # Determine constraint status
+        if n_cases == 0:
+            status_text = "No load cases"
+            details = "Add or import load cases to begin"
+            bg_color = "#cccccc"  # Gray
+        elif n_cases < n_vars:
+            status_text = "UNDERCONSTRAINED"
+            details = f"{n_cases} equation(s), {n_vars} variable(s)\nNeed at least {n_vars} load cases"
+            bg_color = "#ff4444"  # Red
+        elif n_cases == n_vars:
+            status_text = "Just determined"
+            details = f"{n_cases} equation(s), {n_vars} variable(s)\nSystem is exactly determined"
+            bg_color = "#ffaa00"  # Orange
+        else:
+            status_text = "Well constrained"
+            details = f"{n_cases} equation(s), {n_vars} variable(s)\nSystem is overdetermined (good)"
+            bg_color = "#44cc44"  # Green
+
+        # Update UI
+        self.constraint_status_label.setText(status_text)
+        self.constraint_status_label.setStyleSheet(
+            f"padding: 6px; border-radius: 3px; background-color: {bg_color}; "
+            f"color: white; font-weight: bold;"
+        )
+        self.constraint_details_label.setText(details)
 
     def _settings(self) -> SolverSettings:
         data = self.objective.currentData()
