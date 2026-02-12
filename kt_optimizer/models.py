@@ -18,6 +18,7 @@ class SignMode(str, Enum):
         "linked"  # one Kt: + and - same magnitude, opposite sign (signed force column)
     )
     INDIVIDUAL = "individual"  # separate Kt for + and - (two design vars per direction)
+    SET = "set"  # user-specified fixed Kt values (not a design variable)
 
 
 @dataclass(slots=True)
@@ -38,6 +39,9 @@ class SolverSettings:
     """When True, per-direction dropdowns apply: linked (signed) or individual (+/- separate)."""
     sign_mode_per_component: list[SignMode] | None = None
     """Length 6, order Fx,Fy,Fz,Mx,My,Mz. Used only when use_separate_sign is True."""
+    fixed_kt_values: list[tuple[float, float]] | None = None
+    """Length 6, parallel to sign_mode_per_component. (kt_plus, kt_minus) per component.
+    Only entries where sign_mode is SET are used."""
     objective_mode: ObjectiveMode = ObjectiveMode.MINIMIZE_MAX_DEVIATION
     safety_factor: float = 1.0
 

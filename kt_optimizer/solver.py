@@ -58,23 +58,39 @@ def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _build_force_matrix(df: pd.DataFrame, settings: SolverSettings):
+    """Build the force matrix for the LP, returning design-variable columns only.
+
+    Returns (f_mat, kt_names, fixed_offset) where *fixed_offset* is the stress
+    contribution from SET components (shape ``(n_cases,)``).
+    """
     f = df[FORCE_COLUMNS].to_numpy(dtype=float)
+    n_cases = f.shape[0]
+    fixed_offset = np.zeros(n_cases, dtype=float)
     use_separate = settings.use_separate_sign
     modes = settings.sign_mode_per_component
+    fixed_vals = settings.fixed_kt_values
 
     if not use_separate:
-        return f.copy(), list(FORCE_COLUMNS)
+        return f.copy(), list(FORCE_COLUMNS), fixed_offset
 
     # When no per-component modes given, default to all individual (backward compat)
     if modes is None or len(modes) != 6:
         modes = [SignMode.INDIVIDUAL] * 6
 
     # Per-component: linked => one signed column; individual => two columns (+, -)
+    # SET => no columns, contribution goes into fixed_offset
     cols_list: list[np.ndarray] = []
     names: list[str] = []
     for i, comp in enumerate(FORCE_COLUMNS):
         mode = modes[i] if i < len(modes) else SignMode.LINKED
-        if mode == SignMode.LINKED:
+        if mode == SignMode.SET:
+            kt_plus, kt_minus = (0.0, 0.0)
+            if fixed_vals and i < len(fixed_vals):
+                kt_plus, kt_minus = fixed_vals[i]
+            f_pos = np.maximum(f[:, i], 0.0)
+            f_neg = np.abs(np.minimum(f[:, i], 0.0))
+            fixed_offset += f_pos * kt_plus + f_neg * kt_minus
+        elif mode == SignMode.LINKED:
             cols_list.append(f[:, i : i + 1])
             names.append(comp)
         else:
@@ -84,7 +100,10 @@ def _build_force_matrix(df: pd.DataFrame, settings: SolverSettings):
             cols_list.append(f_neg)
             names.append(f"{comp}+")
             names.append(f"{comp}-")
-    return np.hstack(cols_list), names
+    if cols_list:
+        return np.hstack(cols_list), names, fixed_offset
+    # All components are SET – no design variables
+    return np.empty((n_cases, 0), dtype=float), names, fixed_offset
 
 
 def _build_bounds(n_vars: int):
@@ -142,6 +161,8 @@ def _signed_kt_sigma(
     if modes is None or len(modes) != len(FORCE_COLUMNS):
         modes = [SignMode.INDIVIDUAL] * len(FORCE_COLUMNS)
 
+    fixed_vals = settings.fixed_kt_values
+
     sigma_signed = np.zeros(len(normalized), dtype=float)
     for row_idx in range(forces.shape[0]):
         s = 0.0
@@ -154,6 +175,21 @@ def _signed_kt_sigma(
                 settings.use_separate_sign
                 and modes
                 and i < len(modes)
+                and modes[i] == SignMode.SET
+            ):
+                # Use fixed Kt values for SET components.
+                kt_plus, kt_minus = (0.0, 0.0)
+                if fixed_vals and i < len(fixed_vals):
+                    kt_plus, kt_minus = fixed_vals[i]
+                if fval >= 0.0:
+                    k_val = kt_plus
+                else:
+                    k_val = kt_minus
+                s += k_val * abs(fval)
+            elif (
+                settings.use_separate_sign
+                and modes
+                and i < len(modes)
                 and modes[i] == SignMode.INDIVIDUAL
             ):
                 # Use per-sign Kt for this component.
@@ -162,6 +198,7 @@ def _signed_kt_sigma(
                 else:
                     k_name = f"{comp}-"
                 k_val = kt_map.get(k_name, 0.0)
+                s += k_val * fval
             else:
                 # Linked or non-separate: one Kt per component.
                 # Prefer the base name, fall back to the canonical "+"" slot.
@@ -169,7 +206,7 @@ def _signed_kt_sigma(
                     k_val = kt_map[comp]
                 else:
                     k_val = kt_map.get(f"{comp}+", 0.0)
-            s += k_val * fval
+                s += k_val * fval
         sigma_signed[row_idx] = s
 
     # Flag rows where the signed-Kt model would flip the stress sign
@@ -268,13 +305,23 @@ def find_minimal_unlink(
     if rms_threshold is None:
         rms_threshold = max(0.01 * mean_stress, 1e-6)
 
+    # Preserve SET components from base_settings; only vary non-SET ones.
+    base_modes = base_settings.sign_mode_per_component or [SignMode.LINKED] * len(
+        FORCE_COLUMNS
+    )
+    set_indices = {
+        i for i, m in enumerate(base_modes) if i < len(base_modes) and m == SignMode.SET
+    }
+    variable_indices = [i for i in range(len(FORCE_COLUMNS)) if i not in set_indices]
+
     settings = SolverSettings(
         use_separate_sign=True,
         sign_mode_per_component=None,
         objective_mode=base_settings.objective_mode,
         safety_factor=base_settings.safety_factor,
+        fixed_kt_values=base_settings.fixed_kt_values,
     )
-    n = len(FORCE_COLUMNS)
+    n = len(variable_indices)
     best_result: SolverResult | None = None
     best_modes: list[SignMode] | None = None
 
@@ -288,20 +335,26 @@ def find_minimal_unlink(
         return True
 
     for k in range(n + 1):
-        for indices in itertools.combinations(range(n), k):
-            modes = [
-                SignMode.INDIVIDUAL if i in indices else SignMode.LINKED
-                for i in range(n)
-            ]
+        for combo in itertools.combinations(range(n), k):
+            unlink_set = {variable_indices[j] for j in combo}
+            modes = []
+            for i in range(len(FORCE_COLUMNS)):
+                if i in set_indices:
+                    modes.append(SignMode.SET)
+                elif i in unlink_set:
+                    modes.append(SignMode.INDIVIDUAL)
+                else:
+                    modes.append(SignMode.LINKED)
             settings.sign_mode_per_component = modes
             result = solve(df, settings=settings, logger=logger)
             if _acceptable(result):
                 best_modes = modes
                 best_result = result
+                unlinked_names = [FORCE_COLUMNS[variable_indices[j]] for j in combo]
                 logger.info(
                     "Minimal unlink: %d direction(s) unlinked -> %s",
                     k,
-                    [FORCE_COLUMNS[i] for i in indices],
+                    unlinked_names,
                 )
                 return (best_modes, best_result)
             # Fallback: keep successful result with fewest unlinks
@@ -312,7 +365,11 @@ def find_minimal_unlink(
                 best_result = result
                 best_modes = modes
 
-    return (best_modes or [SignMode.INDIVIDUAL] * n, best_result)
+    fallback = [
+        SignMode.SET if i in set_indices else SignMode.INDIVIDUAL
+        for i in range(len(FORCE_COLUMNS))
+    ]
+    return (best_modes or fallback, best_result)
 
 
 def solve(
@@ -327,7 +384,7 @@ def solve(
             success=False, message="No valid load cases with Stress provided"
         )
 
-    f_mat, kt_names = _build_force_matrix(normalized, settings)
+    f_mat, kt_names, fixed_offset = _build_force_matrix(normalized, settings)
     sigma = normalized["Stress"].to_numpy(dtype=float).copy()
     logger.info("Building force matrix (%dx%d)", f_mat.shape[0], f_mat.shape[1])
 
@@ -368,19 +425,42 @@ def solve(
             for i, m in enumerate(settings.sign_mode_per_component)
             if i < len(settings.sign_mode_per_component) and m == SignMode.INDIVIDUAL
         ]
+        set_comps = [
+            FORCE_COLUMNS[i]
+            for i, m in enumerate(settings.sign_mode_per_component)
+            if i < len(settings.sign_mode_per_component) and m == SignMode.SET
+        ]
         if individual:
             logger.info("Individual + / - for: %s", ", ".join(individual))
-        else:
+        if set_comps:
+            for comp in set_comps:
+                idx = FORCE_COLUMNS.index(comp)
+                vals = (0.0, 0.0)
+                if settings.fixed_kt_values and idx < len(settings.fixed_kt_values):
+                    vals = settings.fixed_kt_values[idx]
+                logger.info("SET %s: Kt+ = %.6f, Kt- = %.6f", comp, vals[0], vals[1])
+        if not individual and not set_comps:
             logger.info("Linked + / - (signed) for all directions")
 
-    logger.info(
-        "Solving min-max deviation LP (%d constraints, %d variables)",
-        f_mat.shape[0],
-        f_mat.shape[1] + 1,
-    )
-    success, message, k = _solve_min_max_deviation(f_mat, sigma, settings)
+    # Subtract fixed (SET) contributions so the LP only fits the variable part.
+    sigma_effective = sigma - fixed_offset
 
-    sigma_pred = f_mat @ k
+    if n_vars == 0:
+        # All components are SET – nothing to optimise.
+        logger.info("All components are SET; no LP to solve.")
+        success, message_text, k = True, "All Kt values are user-set", np.empty(0)
+    else:
+        logger.info(
+            "Solving min-max deviation LP (%d constraints, %d variables)",
+            f_mat.shape[0],
+            n_vars + 1,
+        )
+        success, message_text, k = _solve_min_max_deviation(
+            f_mat, sigma_effective, settings
+        )
+    message = message_text
+
+    sigma_pred = (f_mat @ k if n_vars > 0 else np.zeros_like(sigma)) + fixed_offset
     error = sigma_pred - sigma
     min_error = float(np.min(error))
     max_error = float(np.max(error))
@@ -419,7 +499,7 @@ def solve(
     for j in range(len(k)):
         k2 = k.copy()
         k2[j] *= 0.99
-        if np.any((f_mat @ k2 - sigma) < 0):
+        if np.any((f_mat @ k2 - sigma_effective) < 0):
             sensitivity_violations += 1
 
     if success and min_error >= -1e-6:
@@ -441,8 +521,24 @@ def solve(
     if constraint_note:
         message = f"{message} | {constraint_note}"
 
+    # Merge solver-determined Kt with user-fixed (SET) values before canonical expansion.
+    all_kt_names = list(kt_names)
+    all_kt_values = list(k)
+    if settings.use_separate_sign and settings.sign_mode_per_component:
+        fixed_vals = settings.fixed_kt_values
+        for i, comp in enumerate(FORCE_COLUMNS):
+            if (
+                i < len(settings.sign_mode_per_component)
+                and settings.sign_mode_per_component[i] == SignMode.SET
+            ):
+                kt_plus, kt_minus = (0.0, 0.0)
+                if fixed_vals and i < len(fixed_vals):
+                    kt_plus, kt_minus = fixed_vals[i]
+                all_kt_names.extend([f"{comp}+", f"{comp}-"])
+                all_kt_values.extend([kt_plus, kt_minus])
+
     kt_names_canonical, kt_values_canonical = expand_kt_to_canonical(
-        kt_names, k.tolist()
+        all_kt_names, all_kt_values
     )
 
     # Optional diagnostic: if the user interprets Kt as a signed stiffness multiplying

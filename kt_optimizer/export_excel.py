@@ -62,12 +62,18 @@ def export_to_excel(
         )
     if settings.use_separate_sign and settings.sign_mode_per_component:
         rows.append([])
-        rows.append(["Component", "Sign mode"])
+        rows.append(["Component", "Sign mode", "Kt+", "Kt-"])
         for i, comp in enumerate(FORCE_COLUMNS):
             if i < len(settings.sign_mode_per_component):
                 m = settings.sign_mode_per_component[i]
-                label = "Linked" if m == SignMode.LINKED else "Individual"
-                rows.append([comp, label])
+                if m == SignMode.SET:
+                    kt_plus, kt_minus = (0.0, 0.0)
+                    if settings.fixed_kt_values and i < len(settings.fixed_kt_values):
+                        kt_plus, kt_minus = settings.fixed_kt_values[i]
+                    rows.append([comp, "Set", f"{kt_plus:.6f}", f"{kt_minus:.6f}"])
+                else:
+                    label = "Linked" if m == SignMode.LINKED else "Individual"
+                    rows.append([comp, label, "", ""])
 
     rows.append([])
     rows.append([])

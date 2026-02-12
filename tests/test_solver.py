@@ -155,3 +155,96 @@ def test_constraint_status_strongly_under_constrained():
     )
     result = solve(df, settings)
     assert result.diagnostics.get("constraint_status") == "strongly_under_constrained"
+
+
+def test_set_mode_excludes_design_variables():
+    """SET components should not count as design variables."""
+    df = _sample_df()
+    # All linked: 6 design vars
+    settings_linked = SolverSettings(
+        use_separate_sign=True,
+        sign_mode_per_component=[SignMode.LINKED] * 6,
+    )
+    result_linked = solve(df, settings_linked)
+    assert result_linked.diagnostics["n_kt_variables"] == 6
+
+    # Set Fx and Fy, rest linked: 4 design vars
+    settings_set = SolverSettings(
+        use_separate_sign=True,
+        sign_mode_per_component=[
+            SignMode.SET, SignMode.SET,
+            SignMode.LINKED, SignMode.LINKED, SignMode.LINKED, SignMode.LINKED,
+        ],
+        fixed_kt_values=[(1.0, 0.8), (1.0, 0.6), (0, 0), (0, 0), (0, 0), (0, 0)],
+    )
+    result_set = solve(df, settings_set)
+    assert result_set.diagnostics["n_kt_variables"] == 4
+
+
+def test_set_mode_fixed_values_contribute_to_prediction():
+    """SET Kt values should contribute to the predicted stress."""
+    # Two cases: only Fx active. Set Fx with Kt+=2.0, Kt-=1.5
+    df = pd.DataFrame(
+        [
+            ["LC1", 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 20.0],
+            ["LC2", -10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 15.0],
+        ],
+        columns=TABLE_COLUMNS,
+    )
+    settings = SolverSettings(
+        use_separate_sign=True,
+        sign_mode_per_component=[SignMode.SET] * 6,
+        fixed_kt_values=[(2.0, 1.5), (0, 0), (0, 0), (0, 0), (0, 0), (0, 0)],
+    )
+    result = solve(df, settings)
+    assert result.success
+    # Predicted: LC1 = 10*2.0 = 20, LC2 = 10*1.5 = 15
+    assert abs(result.sigma_pred[0] - 20.0) < 1e-6
+    assert abs(result.sigma_pred[1] - 15.0) < 1e-6
+
+
+def test_set_mode_zero_values_deactivate():
+    """SET with both values 0 should deactivate the component (no contribution)."""
+    df = pd.DataFrame(
+        [
+            ["LC1", 100.0, 50.0, 0.0, 0.0, 0.0, 0.0, 100.0],
+            ["LC2", 0.0, 100.0, 0.0, 0.0, 0.0, 0.0, 100.0],
+        ],
+        columns=TABLE_COLUMNS,
+    )
+    # SET Fx to (0,0) -> Fx contributes nothing; only Fy is a design variable.
+    settings = SolverSettings(
+        use_separate_sign=True,
+        sign_mode_per_component=[
+            SignMode.SET, SignMode.LINKED,
+            SignMode.LINKED, SignMode.LINKED, SignMode.LINKED, SignMode.LINKED,
+        ],
+        fixed_kt_values=[(0, 0), (0, 0), (0, 0), (0, 0), (0, 0), (0, 0)],
+    )
+    result = solve(df, settings)
+    assert result.success
+    assert result.diagnostics["n_kt_variables"] == 5
+
+
+def test_set_mode_constraint_status_reflects_fewer_variables():
+    """With SET reducing variable count, constraint status should improve."""
+    # 2 load cases with all 6 components linked -> strongly under-constrained.
+    # Setting 4 components to SET -> 2 vars, 2 cases -> well_determined.
+    df = pd.DataFrame(
+        [
+            ["LC1", 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+            ["LC2", 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+        ],
+        columns=TABLE_COLUMNS,
+    )
+    settings = SolverSettings(
+        use_separate_sign=True,
+        sign_mode_per_component=[
+            SignMode.LINKED, SignMode.LINKED,
+            SignMode.SET, SignMode.SET, SignMode.SET, SignMode.SET,
+        ],
+        fixed_kt_values=[(0, 0), (0, 0), (0, 0), (0, 0), (0, 0), (0, 0)],
+    )
+    result = solve(df, settings)
+    assert result.diagnostics["n_kt_variables"] == 2
+    assert result.diagnostics["constraint_status"] == "well_determined"

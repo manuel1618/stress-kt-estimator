@@ -130,13 +130,44 @@ class MainWindow(QMainWindow):
         sign_form = QFormLayout(self.sign_mode_widget)
         sign_form.setContentsMargins(0, 0, 0, 0)
         self.sign_mode_combo: dict[str, QComboBox] = {}
+        self.fixed_kt_edits: dict[str, tuple[QLineEdit, QLineEdit]] = {}
         for comp in FORCE_COLUMNS:
             combo = QComboBox()
             combo.addItem("Linked (+/− same magnitude, opposite sign)", SignMode.LINKED)
             combo.addItem("Individual (separate + and − Kt)", SignMode.INDIVIDUAL)
+            combo.addItem("Set (manual Kt values)", SignMode.SET)
             combo.setCurrentIndex(0)
+
+            kt_plus_edit = QLineEdit("0")
+            kt_minus_edit = QLineEdit("0")
+            kt_plus_edit.setFixedWidth(50)
+            kt_minus_edit.setFixedWidth(50)
+
+            set_container = QWidget()
+            set_layout = QHBoxLayout(set_container)
+            set_layout.setContentsMargins(0, 0, 0, 0)
+            set_layout.addWidget(QLabel("+:"))
+            set_layout.addWidget(kt_plus_edit)
+            set_layout.addWidget(QLabel("\u2212:"))
+            set_layout.addWidget(kt_minus_edit)
+            set_container.setVisible(False)
+
+            row_widget = QWidget()
+            row_layout = QVBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(2)
+            row_layout.addWidget(combo)
+            row_layout.addWidget(set_container)
+
+            combo.currentIndexChanged.connect(
+                lambda _idx, sc=set_container, cb=combo: sc.setVisible(
+                    cb.currentData() == SignMode.SET
+                )
+            )
+
             self.sign_mode_combo[comp] = combo
-            sign_form.addRow(f"{comp}:", combo)
+            self.fixed_kt_edits[comp] = (kt_plus_edit, kt_minus_edit)
+            sign_form.addRow(f"{comp}:", row_widget)
         self.sign_mode_widget.setVisible(True)
         layout.addWidget(self.use_sign)
         layout.addWidget(self.sign_mode_widget)
@@ -167,14 +198,26 @@ class MainWindow(QMainWindow):
         )
         use_separate = self.use_sign.isChecked()
         sign_modes: list[SignMode] | None = None
+        fixed_kt: list[tuple[float, float]] | None = None
         if use_separate:
             sign_modes = [
                 self.sign_mode_combo[comp].currentData() or SignMode.LINKED
                 for comp in FORCE_COLUMNS
             ]
+            fixed_kt = []
+            for comp in FORCE_COLUMNS:
+                mode = self.sign_mode_combo[comp].currentData()
+                if mode == SignMode.SET:
+                    plus_edit, minus_edit = self.fixed_kt_edits[comp]
+                    fixed_kt.append(
+                        (float(plus_edit.text() or "0"), float(minus_edit.text() or "0"))
+                    )
+                else:
+                    fixed_kt.append((0.0, 0.0))
         return SolverSettings(
             use_separate_sign=use_separate,
             sign_mode_per_component=sign_modes,
+            fixed_kt_values=fixed_kt,
             objective_mode=objective_mode,
             safety_factor=float(self.safety_factor.text()),
         )
@@ -265,9 +308,15 @@ class MainWindow(QMainWindow):
         self.use_sign.setChecked(True)
         for i, comp in enumerate(FORCE_COLUMNS):
             combo = self.sign_mode_combo[comp]
-            combo.setCurrentIndex(
-                1 if (i < len(modes) and modes[i] == SignMode.INDIVIDUAL) else 0
-            )
+            # Preserve SET components — don't overwrite user's manual values
+            if combo.currentData() == SignMode.SET:
+                continue
+            if i < len(modes) and modes[i] == SignMode.INDIVIDUAL:
+                combo.setCurrentIndex(1)
+            elif i < len(modes) and modes[i] == SignMode.SET:
+                combo.setCurrentIndex(2)
+            else:
+                combo.setCurrentIndex(0)
 
         unlinked = [
             FORCE_COLUMNS[i]
