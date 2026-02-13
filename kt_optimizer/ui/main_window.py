@@ -108,15 +108,13 @@ class MainWindow(QMainWindow):
         bottom_layout.addLayout(actions)
         bottom_section.setMinimumHeight(260)
 
-        # Main vertical splitter: input matrix gets more space and can be resized
+        # Main vertical splitter: input matrix ~25% of height, rest for settings/results
         main_split = QSplitter(Qt.Vertical)
         main_split.addWidget(input_section)
         main_split.addWidget(bottom_section)
-        main_split.setSizes([420, 380])  # table area larger by default
-        main_split.setStretchFactor(
-            0, 2
-        )  # input section grows 2x when window is resized
-        main_split.setStretchFactor(1, 1)
+        main_split.setSizes([200, 600])  # ~25% / 75% initial split
+        main_split.setStretchFactor(0, 1)  # upper: 1 part
+        main_split.setStretchFactor(1, 3)  # lower: 3 parts → 25% / 75%
         main_split.setChildrenCollapsible(False)
 
         root_layout.addWidget(main_split)
