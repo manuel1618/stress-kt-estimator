@@ -2,7 +2,16 @@
   "permissions": {
     "allow": [
       "Bash(uv run pytest:*)",
-      "Bash(uv run ruff check:*)"
+      "Bash(uv run ruff check:*)",
+      "Bash(python3:*)",
+      "Bash(python:*)",
+      "Bash(uv run python:*)",
+      "Bash(git push:*)",
+      "Bash(git commit --amend -m \"$\\(cat <<''EOF''\nfix: remove abs\\(\\) from expand_kt_to_canonical that destroyed Kt sign info\n\nThe abs\\(\\)/-abs\\(\\) convention in expand_kt_to_canonical silently flipped\nsigns when the solver found negative Kt values, producing incorrect\ndisplayed/exported Kt that could not reconstruct stress correctly.\n\nNow INDIVIDUAL/SET entries pass through raw solver coefficients and\nLINKED entries use raw/-raw \\(not abs\\(raw\\)/-abs\\(raw\\)\\) for the +/- split.\nEOF\n\\)\")",
+      "Bash(git checkout:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfix: enforce consistent sign convention with Kt ≥ 0 across all modes\n\nFixes fundamental inconsistencies where LINKED mode used signed forces but flipped\nKt signs in display, while INDIVIDUAL mode stripped signs from forces, requiring\nnegative Kt values to compensate. This made the physics confusing and violated the\nprinciple that stress concentration factors are non-negative geometric properties.\n\nChanges:\n- Enforce Kt ≥ 0 in LP bounds \\(physically meaningful\\)\n- LINKED mode: display same Kt for Fx+ and Fx- \\(no sign flip\\)\n- INDIVIDUAL/SET modes: preserve signs in force matrix \\(remove abs\\(\\)\\)\n- Update validation to use consistent signed physics\n- Add comprehensive tests for new behavior\n- Document sign conventions in CLAUDE.md\n\nBreaking change: Kt values will differ from previous versions and physically\ninconsistent data \\(opposite force/stress signs\\) will now be correctly rejected.\nAll automated tests verify the new consistent behavior.\nEOF\n\\)\")",
+      "Bash(gh pr create:*)"
     ]
   }
 }

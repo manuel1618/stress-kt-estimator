@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
+    QAbstractItemView,
 )
 
 from kt_optimizer.models import SolverResult
@@ -23,6 +24,7 @@ class ResultPanel(QWidget):
         self.kt_table = QTableWidget(1, 0)
         self.kt_table.verticalHeader().setVisible(False)
         self.kt_table.setMaximumHeight(90)
+        self.kt_table.setEditTriggers(QAbstractItemView.AllEditTriggers)
 
         self.fig = Figure(figsize=(5, 4))
         self.canvas = FigureCanvas(self.fig)
@@ -95,3 +97,21 @@ class ResultPanel(QWidget):
 
         self.fig.tight_layout()
         self.canvas.draw_idle()
+
+    def current_kt_values(self) -> list[float]:
+        """Return current Kt values from the table (row 0, ordered by columns)."""
+        values: list[float] = []
+        n_cols = self.kt_table.columnCount()
+        for col in range(n_cols):
+            item = self.kt_table.item(0, col)
+            text = item.text().strip() if item is not None and item.text() is not None else ""
+            if not text:
+                values.append(0.0)
+            else:
+                try:
+                    values.append(float(text))
+                except ValueError:
+                    # Keep raw value as 0.0; caller should validate if needed.
+                    values.append(0.0)
+        return values
+

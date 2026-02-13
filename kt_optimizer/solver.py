@@ -8,6 +8,7 @@ import pandas as pd
 from scipy.optimize import linprog
 
 from kt_optimizer.models import (
+    CANONICAL_KT_ORDER,
     FORCE_COLUMNS,
     TABLE_COLUMNS,
     SignMode,
@@ -79,6 +80,8 @@ def _build_force_matrix(df: pd.DataFrame, settings: SolverSettings):
 
     # Per-component: linked => one signed column; individual => two columns (+, -)
     # SET => no columns, contribution goes into fixed_offset
+    # For INDIVIDUAL/SET negative side we use magnitude |min(F,0)| so that Kt- >= 0
+    # can produce positive stress from negative force (σ = Kt+*max(F,0) + Kt-*|min(F,0)|).
     cols_list: list[np.ndarray] = []
     names: list[str] = []
     for i, comp in enumerate(FORCE_COLUMNS):
@@ -88,16 +91,16 @@ def _build_force_matrix(df: pd.DataFrame, settings: SolverSettings):
             if fixed_vals and i < len(fixed_vals):
                 kt_plus, kt_minus = fixed_vals[i]
             f_pos = np.maximum(f[:, i], 0.0)
-            f_neg = np.abs(np.minimum(f[:, i], 0.0))
-            fixed_offset += f_pos * kt_plus + f_neg * kt_minus
+            f_neg_mag = np.abs(np.minimum(f[:, i], 0.0))  # magnitude of negative part
+            fixed_offset += f_pos * kt_plus + f_neg_mag * kt_minus
         elif mode == SignMode.LINKED:
             cols_list.append(f[:, i : i + 1])
             names.append(comp)
         else:
             f_pos = np.maximum(f[:, i], 0.0).reshape(-1, 1)
-            f_neg = np.abs(np.minimum(f[:, i], 0.0)).reshape(-1, 1)
+            f_neg_mag = np.abs(np.minimum(f[:, i], 0.0)).reshape(-1, 1)  # magnitude
             cols_list.append(f_pos)
-            cols_list.append(f_neg)
+            cols_list.append(f_neg_mag)
             names.append(f"{comp}+")
             names.append(f"{comp}-")
     if cols_list:
@@ -107,8 +110,8 @@ def _build_force_matrix(df: pd.DataFrame, settings: SolverSettings):
 
 
 def _build_bounds(n_vars: int):
-    # No nonnegativity constraint on Kt: allow signed values.
-    return [(None, None)] * n_vars
+    # Enforce Kt ≥ 0: stress concentration factors are non-negative (physical property).
+    return [(0, None)] * n_vars
 
 
 def _solve_min_max_deviation(f_mat, sigma, settings: SolverSettings):
@@ -177,28 +180,25 @@ def _signed_kt_sigma(
                 and i < len(modes)
                 and modes[i] == SignMode.SET
             ):
-                # Use fixed Kt values for SET components.
+                # Fixed Kt; negative side uses magnitude (consistent with force matrix).
                 kt_plus, kt_minus = (0.0, 0.0)
                 if fixed_vals and i < len(fixed_vals):
                     kt_plus, kt_minus = fixed_vals[i]
                 if fval >= 0.0:
-                    k_val = kt_plus
+                    s += kt_plus * fval
                 else:
-                    k_val = kt_minus
-                s += k_val * abs(fval)
+                    s += kt_minus * abs(fval)
             elif (
                 settings.use_separate_sign
                 and modes
                 and i < len(modes)
                 and modes[i] == SignMode.INDIVIDUAL
             ):
-                # Use per-sign Kt for this component.
+                # Per-sign Kt; negative side uses magnitude so Kt-*|F| gives positive contribution when F<0.
                 if fval >= 0.0:
-                    k_name = f"{comp}+"
+                    s += kt_map.get(f"{comp}+", 0.0) * fval
                 else:
-                    k_name = f"{comp}-"
-                k_val = kt_map.get(k_name, 0.0)
-                s += k_val * fval
+                    s += kt_map.get(f"{comp}-", 0.0) * abs(fval)
             else:
                 # Linked or non-separate: one Kt per component.
                 # Prefer the base name, fall back to the canonical "+"" slot.
@@ -215,6 +215,116 @@ def _signed_kt_sigma(
     mask = (np.abs(sigma_signed) > 1e-8) & (np.abs(sigma) > 1e-8)
     inconsistent = bool(np.any(prod[mask] < -1e-6))
     return sigma_signed, inconsistent
+
+
+def recalc_with_fixed_kt(
+    df: pd.DataFrame,
+    settings: SolverSettings,
+    kt_values_canonical: list[float],
+    logger: logging.Logger | None = None,
+) -> SolverResult:
+    """Recalculate predicted stresses for user-edited Kt values (no optimisation).
+
+    This uses the same magnitude-based convention as the LP:
+
+        σ_pred = sum_j (Kt_j+ * max(F_j, 0) + Kt_j- * |min(F_j, 0)|)
+
+    where (Kt_j+, Kt_j-) come from the canonical Kt list in the fixed order
+    CANONICAL_KT_ORDER.
+    """
+    logger = logger or logging.getLogger("kt_optimizer")
+    normalized = _normalize_columns(df)
+
+    logger.info("Recalc with fixed Kt: %d load cases", len(normalized))
+    if normalized.empty:
+        return SolverResult(
+            success=False,
+            message="No valid load cases with Stress provided",
+        )
+
+    sigma = normalized["Stress"].to_numpy(dtype=float).copy()
+    if settings.safety_factor <= 0:
+        return SolverResult(success=False, message="Safety factor must be > 0")
+    sigma *= float(settings.safety_factor)
+
+    forces = normalized[FORCE_COLUMNS].to_numpy(dtype=float)
+    if len(kt_values_canonical) != len(CANONICAL_KT_ORDER):
+        raise ValueError(
+            f"Expected {len(CANONICAL_KT_ORDER)} Kt values, got {len(kt_values_canonical)}"
+        )
+    kt_map = dict(zip(CANONICAL_KT_ORDER, kt_values_canonical))
+
+    sigma_pred = np.zeros_like(sigma)
+    for row_idx in range(forces.shape[0]):
+        s = 0.0
+        for i, comp in enumerate(FORCE_COLUMNS):
+            fval = forces[row_idx, i]
+            if abs(fval) <= 1e-12:
+                continue
+            if fval >= 0.0:
+                s += kt_map.get(f"{comp}+", 0.0) * fval
+            else:
+                s += kt_map.get(f"{comp}-", 0.0) * abs(fval)
+        sigma_pred[row_idx] = s
+
+    error = sigma_pred - sigma
+    min_error = float(np.min(error))
+    max_error = float(np.max(error))
+    rms_error = float(np.sqrt(np.mean(np.square(error))))
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        margin_pct = np.where(
+            sigma != 0, (sigma_pred - sigma) / np.abs(sigma) * 100.0, np.nan
+        )
+
+    per_case: list[ValidationCase] = []
+    n_rows = len(normalized)
+    for i in range(n_rows):
+        row = normalized.iloc[i]
+        mc = float(margin_pct[i]) if not np.isnan(margin_pct[i]) else 0.0
+        per_case.append(
+            ValidationCase(
+                case_name=str(row["Case Name"]),
+                actual=float(sigma[i]),
+                predicted=float(sigma_pred[i]),
+                margin_pct=mc,
+            )
+        )
+        logger.info(
+            "Recalc case %s | Actual: %.3f | Predicted: %.3f | Margin: %+.2f%%",
+            row["Case Name"],
+            float(sigma[i]),
+            float(sigma_pred[i]),
+            mc,
+        )
+
+    return SolverResult(
+        success=True,
+        message="Recalculated with fixed Kt (no optimisation)",
+        kt_names=list(CANONICAL_KT_ORDER),
+        kt_values=list(kt_values_canonical),
+        sigma_target=sigma.tolist(),
+        sigma_pred=sigma_pred.tolist(),
+        min_error=min_error,
+        max_error=max_error,
+        rms_error=rms_error,
+        worst_case_margin=float(np.nanmin(margin_pct)) if len(margin_pct) else 0.0,
+        max_overprediction=float(np.max(error)),
+        max_underprediction=float(np.min(error)),
+        condition_number=0.0,
+        sensitivity_violations=0,
+        diagnostics={
+            "objective": "fixed_kt_recalc",
+            "n_load_cases": len(normalized),
+            "n_kt_variables": len(CANONICAL_KT_ORDER),
+            "rank": 0,
+            "constraint_status": "recalc_fixed_kt",
+            "constraint_status_note": "",
+            "ill_conditioned": False,
+            "signed_kt_inconsistent": False,
+        },
+        per_case=per_case,
+    )
 
 
 def suggest_unlink_from_data(
@@ -472,21 +582,23 @@ def solve(
         )
 
     per_case: list[ValidationCase] = []
-    for row_idx, row in normalized.iterrows():
-        mc = float(margin_pct[row_idx]) if not np.isnan(margin_pct[row_idx]) else 0.0
+    n_rows = len(normalized)
+    for i in range(n_rows):
+        row = normalized.iloc[i]
+        mc = float(margin_pct[i]) if not np.isnan(margin_pct[i]) else 0.0
         per_case.append(
             ValidationCase(
                 case_name=str(row["Case Name"]),
-                actual=float(sigma[row_idx]),
-                predicted=float(sigma_pred[row_idx]),
+                actual=float(sigma[i]),
+                predicted=float(sigma_pred[i]),
                 margin_pct=mc,
             )
         )
         logger.info(
             "Case %s | Actual: %.3f | Predicted: %.3f | Margin: %+.2f%%",
             row["Case Name"],
-            float(sigma[row_idx]),
-            float(sigma_pred[row_idx]),
+            float(sigma[i]),
+            float(sigma_pred[i]),
             mc,
         )
 

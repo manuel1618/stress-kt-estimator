@@ -27,7 +27,12 @@ from PySide6.QtWidgets import (
 from kt_optimizer.export_excel import export_to_excel
 from kt_optimizer.logger import attach_gui_handler, build_logger
 from kt_optimizer.models import FORCE_COLUMNS, ObjectiveMode, SignMode, SolverSettings
-from kt_optimizer.solver import find_minimal_unlink, solve, suggest_unlink_from_data
+from kt_optimizer.solver import (
+    find_minimal_unlink,
+    recalc_with_fixed_kt,
+    solve,
+    suggest_unlink_from_data,
+)
 from kt_optimizer.ui.result_panel import ResultPanel
 from kt_optimizer.ui.table_model import LoadCaseTableModel
 
@@ -88,10 +93,12 @@ class MainWindow(QMainWindow):
 
         actions = QHBoxLayout()
         self.solve_btn = QPushButton("Solve")
+        self.recalc_btn = QPushButton("Recalc (manual Kt)")
         self.suggest_unlink_btn = QPushButton("Suggest unlink")
         self.export_excel_btn = QPushButton("Export Excel")
         actions.addWidget(self.suggest_unlink_btn)
         actions.addWidget(self.export_excel_btn)
+        actions.addWidget(self.recalc_btn)
         actions.addWidget(self.solve_btn)
 
         bottom_section = QWidget()
@@ -101,15 +108,13 @@ class MainWindow(QMainWindow):
         bottom_layout.addLayout(actions)
         bottom_section.setMinimumHeight(260)
 
-        # Main vertical splitter: input matrix gets more space and can be resized
+        # Main vertical splitter: input matrix ~25% of height, rest for settings/results
         main_split = QSplitter(Qt.Vertical)
         main_split.addWidget(input_section)
         main_split.addWidget(bottom_section)
-        main_split.setSizes([420, 380])  # table area larger by default
-        main_split.setStretchFactor(
-            0, 2
-        )  # input section grows 2x when window is resized
-        main_split.setStretchFactor(1, 1)
+        main_split.setSizes([200, 600])  # ~25% / 75% initial split
+        main_split.setStretchFactor(0, 1)  # upper: 1 part
+        main_split.setStretchFactor(1, 3)  # lower: 3 parts → 25% / 75%
         main_split.setChildrenCollapsible(False)
 
         root_layout.addWidget(main_split)
@@ -119,6 +124,7 @@ class MainWindow(QMainWindow):
         load_btn.clicked.connect(self._load_csv)
         save_btn.clicked.connect(self._save_csv)
         self.solve_btn.clicked.connect(self._solve)
+        self.recalc_btn.clicked.connect(self._recalc_fixed_kt)
         self.suggest_unlink_btn.clicked.connect(self._suggest_unlink)
         self.export_excel_btn.clicked.connect(self._export_excel)
 
@@ -311,12 +317,14 @@ class MainWindow(QMainWindow):
                     )
                 else:
                     fixed_kt.append((0.0, 0.0))
+        safety_text = (self.safety_factor.text() or "").strip()
+        safety_factor = float(safety_text) if safety_text else 1.0
         return SolverSettings(
             use_separate_sign=use_separate,
             sign_mode_per_component=sign_modes,
             fixed_kt_values=fixed_kt,
             objective_mode=objective_mode,
-            safety_factor=float(self.safety_factor.text()),
+            safety_factor=safety_factor,
         )
 
     def _delete_selected(self) -> None:
@@ -468,6 +476,62 @@ class MainWindow(QMainWindow):
 
         # Surface constraint issues very prominently so they are hard to miss.
         self._show_constraint_warning(result)
+
+    def _recalc_fixed_kt(self) -> None:
+        """Recalculate predicted stresses using the currently displayed Kt values.
+
+        This does NOT run the optimizer; it only evaluates the model with the
+        user-edited Kt table.
+        """
+        if self.table_model.df.empty:
+            QMessageBox.warning(self, "No data", "Load or add load cases first.")
+            return
+
+        n_cols = self.results_panel.kt_table.columnCount()
+        if n_cols == 0:
+            QMessageBox.information(
+                self,
+                "No Kt values",
+                "Solve once or enter Kt values in the Kt table before recalculating.",
+            )
+            return
+
+        try:
+            settings = self._settings()
+        except ValueError:
+            QMessageBox.critical(self, "Input Error", "Safety factor must be numeric")
+            return
+
+        # Read Kt values from the first row of the Kt table.
+        kt_values: list[float] = []
+        for col in range(n_cols):
+            item = self.results_panel.kt_table.item(0, col)
+            text = item.text().strip() if item is not None and item.text() is not None else ""
+            if not text:
+                kt_values.append(0.0)
+                continue
+            try:
+                kt_values.append(float(text))
+            except ValueError:
+                header_item = self.results_panel.kt_table.horizontalHeaderItem(col)
+                name = header_item.text() if header_item is not None else f"col {col}"
+                QMessageBox.critical(
+                    self,
+                    "Input Error",
+                    f"Invalid Kt value for {name}: '{text}'",
+                )
+                return
+
+        try:
+            result = recalc_with_fixed_kt(
+                self.table_model.df, settings=settings, kt_values_canonical=kt_values, logger=self.logger
+            )
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "Recalc failed", str(exc))
+            return
+
+        self.last_result = result
+        self.results_panel.update_result(result)
 
     def _export_excel(self) -> None:
         if self.last_result is None:
