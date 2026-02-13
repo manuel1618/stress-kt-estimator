@@ -8,6 +8,7 @@ import pandas as pd
 from scipy.optimize import linprog
 
 from kt_optimizer.models import (
+    CANONICAL_KT_ORDER,
     FORCE_COLUMNS,
     TABLE_COLUMNS,
     SignMode,
@@ -214,6 +215,116 @@ def _signed_kt_sigma(
     mask = (np.abs(sigma_signed) > 1e-8) & (np.abs(sigma) > 1e-8)
     inconsistent = bool(np.any(prod[mask] < -1e-6))
     return sigma_signed, inconsistent
+
+
+def recalc_with_fixed_kt(
+    df: pd.DataFrame,
+    settings: SolverSettings,
+    kt_values_canonical: list[float],
+    logger: logging.Logger | None = None,
+) -> SolverResult:
+    """Recalculate predicted stresses for user-edited Kt values (no optimisation).
+
+    This uses the same magnitude-based convention as the LP:
+
+        σ_pred = sum_j (Kt_j+ * max(F_j, 0) + Kt_j- * |min(F_j, 0)|)
+
+    where (Kt_j+, Kt_j-) come from the canonical Kt list in the fixed order
+    CANONICAL_KT_ORDER.
+    """
+    logger = logger or logging.getLogger("kt_optimizer")
+    normalized = _normalize_columns(df)
+
+    logger.info("Recalc with fixed Kt: %d load cases", len(normalized))
+    if normalized.empty:
+        return SolverResult(
+            success=False,
+            message="No valid load cases with Stress provided",
+        )
+
+    sigma = normalized["Stress"].to_numpy(dtype=float).copy()
+    if settings.safety_factor <= 0:
+        return SolverResult(success=False, message="Safety factor must be > 0")
+    sigma *= float(settings.safety_factor)
+
+    forces = normalized[FORCE_COLUMNS].to_numpy(dtype=float)
+    if len(kt_values_canonical) != len(CANONICAL_KT_ORDER):
+        raise ValueError(
+            f"Expected {len(CANONICAL_KT_ORDER)} Kt values, got {len(kt_values_canonical)}"
+        )
+    kt_map = dict(zip(CANONICAL_KT_ORDER, kt_values_canonical))
+
+    sigma_pred = np.zeros_like(sigma)
+    for row_idx in range(forces.shape[0]):
+        s = 0.0
+        for i, comp in enumerate(FORCE_COLUMNS):
+            fval = forces[row_idx, i]
+            if abs(fval) <= 1e-12:
+                continue
+            if fval >= 0.0:
+                s += kt_map.get(f"{comp}+", 0.0) * fval
+            else:
+                s += kt_map.get(f"{comp}-", 0.0) * abs(fval)
+        sigma_pred[row_idx] = s
+
+    error = sigma_pred - sigma
+    min_error = float(np.min(error))
+    max_error = float(np.max(error))
+    rms_error = float(np.sqrt(np.mean(np.square(error))))
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        margin_pct = np.where(
+            sigma != 0, (sigma_pred - sigma) / np.abs(sigma) * 100.0, np.nan
+        )
+
+    per_case: list[ValidationCase] = []
+    n_rows = len(normalized)
+    for i in range(n_rows):
+        row = normalized.iloc[i]
+        mc = float(margin_pct[i]) if not np.isnan(margin_pct[i]) else 0.0
+        per_case.append(
+            ValidationCase(
+                case_name=str(row["Case Name"]),
+                actual=float(sigma[i]),
+                predicted=float(sigma_pred[i]),
+                margin_pct=mc,
+            )
+        )
+        logger.info(
+            "Recalc case %s | Actual: %.3f | Predicted: %.3f | Margin: %+.2f%%",
+            row["Case Name"],
+            float(sigma[i]),
+            float(sigma_pred[i]),
+            mc,
+        )
+
+    return SolverResult(
+        success=True,
+        message="Recalculated with fixed Kt (no optimisation)",
+        kt_names=list(CANONICAL_KT_ORDER),
+        kt_values=list(kt_values_canonical),
+        sigma_target=sigma.tolist(),
+        sigma_pred=sigma_pred.tolist(),
+        min_error=min_error,
+        max_error=max_error,
+        rms_error=rms_error,
+        worst_case_margin=float(np.nanmin(margin_pct)) if len(margin_pct) else 0.0,
+        max_overprediction=float(np.max(error)),
+        max_underprediction=float(np.min(error)),
+        condition_number=0.0,
+        sensitivity_violations=0,
+        diagnostics={
+            "objective": "fixed_kt_recalc",
+            "n_load_cases": len(normalized),
+            "n_kt_variables": len(CANONICAL_KT_ORDER),
+            "rank": 0,
+            "constraint_status": "recalc_fixed_kt",
+            "constraint_status_note": "",
+            "ill_conditioned": False,
+            "signed_kt_inconsistent": False,
+        },
+        per_case=per_case,
+    )
 
 
 def suggest_unlink_from_data(
