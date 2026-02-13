@@ -311,12 +311,14 @@ class MainWindow(QMainWindow):
                     )
                 else:
                     fixed_kt.append((0.0, 0.0))
+        safety_text = (self.safety_factor.text() or "").strip()
+        safety_factor = float(safety_text) if safety_text else 1.0
         return SolverSettings(
             use_separate_sign=use_separate,
             sign_mode_per_component=sign_modes,
             fixed_kt_values=fixed_kt,
             objective_mode=objective_mode,
-            safety_factor=float(self.safety_factor.text()),
+            safety_factor=safety_factor,
         )
 
     def _delete_selected(self) -> None:

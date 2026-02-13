@@ -79,6 +79,8 @@ def _build_force_matrix(df: pd.DataFrame, settings: SolverSettings):
 
     # Per-component: linked => one signed column; individual => two columns (+, -)
     # SET => no columns, contribution goes into fixed_offset
+    # For INDIVIDUAL/SET negative side we use magnitude |min(F,0)| so that Kt- >= 0
+    # can produce positive stress from negative force (σ = Kt+*max(F,0) + Kt-*|min(F,0)|).
     cols_list: list[np.ndarray] = []
     names: list[str] = []
     for i, comp in enumerate(FORCE_COLUMNS):
@@ -88,16 +90,16 @@ def _build_force_matrix(df: pd.DataFrame, settings: SolverSettings):
             if fixed_vals and i < len(fixed_vals):
                 kt_plus, kt_minus = fixed_vals[i]
             f_pos = np.maximum(f[:, i], 0.0)
-            f_neg = np.minimum(f[:, i], 0.0)  # Preserve sign (≤ 0)
-            fixed_offset += f_pos * kt_plus + f_neg * kt_minus
+            f_neg_mag = np.abs(np.minimum(f[:, i], 0.0))  # magnitude of negative part
+            fixed_offset += f_pos * kt_plus + f_neg_mag * kt_minus
         elif mode == SignMode.LINKED:
             cols_list.append(f[:, i : i + 1])
             names.append(comp)
         else:
             f_pos = np.maximum(f[:, i], 0.0).reshape(-1, 1)
-            f_neg = np.minimum(f[:, i], 0.0).reshape(-1, 1)  # Preserve sign (≤ 0)
+            f_neg_mag = np.abs(np.minimum(f[:, i], 0.0)).reshape(-1, 1)  # magnitude
             cols_list.append(f_pos)
-            cols_list.append(f_neg)
+            cols_list.append(f_neg_mag)
             names.append(f"{comp}+")
             names.append(f"{comp}-")
     if cols_list:
@@ -177,28 +179,25 @@ def _signed_kt_sigma(
                 and i < len(modes)
                 and modes[i] == SignMode.SET
             ):
-                # Use fixed Kt values for SET components.
+                # Fixed Kt; negative side uses magnitude (consistent with force matrix).
                 kt_plus, kt_minus = (0.0, 0.0)
                 if fixed_vals and i < len(fixed_vals):
                     kt_plus, kt_minus = fixed_vals[i]
                 if fval >= 0.0:
-                    k_val = kt_plus
+                    s += kt_plus * fval
                 else:
-                    k_val = kt_minus
-                s += k_val * fval  # Use signed force (consistent with force matrix)
+                    s += kt_minus * abs(fval)
             elif (
                 settings.use_separate_sign
                 and modes
                 and i < len(modes)
                 and modes[i] == SignMode.INDIVIDUAL
             ):
-                # Use per-sign Kt for this component.
+                # Per-sign Kt; negative side uses magnitude so Kt-*|F| gives positive contribution when F<0.
                 if fval >= 0.0:
-                    k_name = f"{comp}+"
+                    s += kt_map.get(f"{comp}+", 0.0) * fval
                 else:
-                    k_name = f"{comp}-"
-                k_val = kt_map.get(k_name, 0.0)
-                s += k_val * fval
+                    s += kt_map.get(f"{comp}-", 0.0) * abs(fval)
             else:
                 # Linked or non-separate: one Kt per component.
                 # Prefer the base name, fall back to the canonical "+"" slot.
@@ -472,21 +471,23 @@ def solve(
         )
 
     per_case: list[ValidationCase] = []
-    for row_idx, row in normalized.iterrows():
-        mc = float(margin_pct[row_idx]) if not np.isnan(margin_pct[row_idx]) else 0.0
+    n_rows = len(normalized)
+    for i in range(n_rows):
+        row = normalized.iloc[i]
+        mc = float(margin_pct[i]) if not np.isnan(margin_pct[i]) else 0.0
         per_case.append(
             ValidationCase(
                 case_name=str(row["Case Name"]),
-                actual=float(sigma[row_idx]),
-                predicted=float(sigma_pred[row_idx]),
+                actual=float(sigma[i]),
+                predicted=float(sigma_pred[i]),
                 margin_pct=mc,
             )
         )
         logger.info(
             "Case %s | Actual: %.3f | Predicted: %.3f | Margin: %+.2f%%",
             row["Case Name"],
-            float(sigma[row_idx]),
-            float(sigma_pred[row_idx]),
+            float(sigma[i]),
+            float(sigma_pred[i]),
             mc,
         )
 

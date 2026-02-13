@@ -96,7 +96,7 @@ class LoadCaseTableModel(QAbstractTableModel):
         self.endRemoveRows()
 
     def load_csv(self, path: str) -> None:
-        data = pd.read_csv(path)
+        data = pd.read_csv(path, encoding="utf-8-sig")
         self.beginResetModel()
         self.df = _normalize_loaded_csv(data)
         self.endResetModel()

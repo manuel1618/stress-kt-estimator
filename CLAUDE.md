@@ -72,16 +72,16 @@ kt_optimizer/
 
 **INDIVIDUAL Mode (Asymmetric Behavior):**
 - Separate Kt+ and Kt- per component (both non-negative)
-- Force matrix split preserves signs: f_pos = max(F, 0), f_neg = min(F, 0)
-- Relationship: σ = Kt+ × max(F, 0) + Kt- × min(F, 0)
-- Allows asymmetric behavior (e.g., buckling, material asymmetry)
+- Force matrix uses magnitudes for the negative side: f_pos = max(F, 0), f_neg = |min(F, 0)|
+- Relationship: σ = Kt+ × max(F, 0) + Kt- × |min(F, 0)| (so negative F can contribute positive σ via Kt-)
+- Allows asymmetric behavior and fits data where stress magnitude is reported (e.g. critical stress)
 - Example: Kt_Fx+ = 2.0, Kt_Fx- = 3.0 means:
-  - F = +100 → σ = 2.0 × 100 = +200 (tension, lower amplification)
-  - F = -100 → σ = 3.0 × (-100) = -300 (compression, higher amplification)
+  - F = +100 → σ = 2.0 × 100 = 200
+  - F = -100 → σ = 3.0 × 100 = 300 (same magnitude of force, different amplification)
 
 **SET Mode:**
 - User-specified fixed Kt values (not optimized)
-- Same physics as INDIVIDUAL mode: σ = Kt+ × max(F, 0) + Kt- × min(F, 0)
+- Same physics as INDIVIDUAL: σ = Kt+ × max(F, 0) + Kt- × |min(F, 0)|
 
 ## Conventions
 

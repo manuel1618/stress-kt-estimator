@@ -158,13 +158,13 @@ def test_linked_mode_same_kt_for_both_signs():
 def test_individual_mode_asymmetric_kt():
     """INDIVIDUAL mode: Kt+ and Kt- can differ, both non-negative.
 
-    Tests asymmetric behavior where compression has higher stress amplification
-    than tension (e.g., due to buckling or material asymmetry).
+    Tests asymmetric behavior; negative side uses magnitude so Kt- × |F| gives
+    stress (e.g. Kt- ≈ 3 when F=-100 and stress=300).
     """
     df = pd.DataFrame(
         [
             ["LC1", 100.0, 0.0, 0.0, 0.0, 0.0, 0.0, 200.0],   # Tension: Kt+ ≈ 2
-            ["LC2", -100.0, 0.0, 0.0, 0.0, 0.0, 0.0, -300.0], # Compression: Kt- ≈ 3
+            ["LC2", -100.0, 0.0, 0.0, 0.0, 0.0, 0.0, 300.0], # |F|=100, stress=300 → Kt- ≈ 3
         ],
         columns=TABLE_COLUMNS,
     )
@@ -196,9 +196,8 @@ def test_individual_mode_asymmetric_kt():
     assert abs(fx_plus_val - 2.0) < 0.1, f"Expected Kt+ ≈ 2.0, got {fx_plus_val}"
     assert abs(fx_minus_val - 3.0) < 0.1, f"Expected Kt- ≈ 3.0, got {fx_minus_val}"
 
-    # Verify stress predictions preserve signs
-    assert result.sigma_pred[0] > 0, "Positive force should give positive stress"
-    assert result.sigma_pred[1] < 0, "Negative force should give negative stress"
+    # Predicted: LC1 = 2*100 = 200, LC2 = 3*100 = 300 (magnitude convention)
+    assert result.sigma_pred[0] > 0 and result.sigma_pred[1] > 0
 
     # Conservative constraint satisfied
     assert result.min_error >= -1e-6, "Conservative constraint violated"
@@ -283,13 +282,14 @@ def test_set_mode_excludes_design_variables():
 
 
 def test_set_mode_fixed_values_contribute_to_prediction():
-    """SET Kt values should contribute to the predicted stress."""
-    # Two cases: only Fx active. Set Fx with Kt+=2.0, Kt-=1.5
-    # Physics: σ = Kt+ × max(F,0) + Kt- × min(F,0)
+    """SET Kt values should contribute to the predicted stress.
+
+    Negative side uses magnitude: σ = Kt+×max(F,0) + Kt-×|min(F,0)|.
+    """
     df = pd.DataFrame(
         [
-            ["LC1", 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 20.0],
-            ["LC2", -10.0, 0.0, 0.0, 0.0, 0.0, 0.0, -15.0],  # Fixed: negative force → negative stress
+            ["LC1", 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 20.0],   # Kt+×10 = 20 → 2.0
+            ["LC2", -10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 15.0],  # Kt-×10 = 15 → 1.5
         ],
         columns=TABLE_COLUMNS,
     )
@@ -300,9 +300,9 @@ def test_set_mode_fixed_values_contribute_to_prediction():
     )
     result = solve(df, settings)
     assert result.success
-    # Predicted: LC1 = 2.0 × 10 = 20, LC2 = 1.5 × (-10) = -15
+    # Predicted: LC1 = 2.0×10 = 20, LC2 = 1.5×|−10| = 15
     assert abs(result.sigma_pred[0] - 20.0) < 1e-6
-    assert abs(result.sigma_pred[1] - (-15.0)) < 1e-6
+    assert abs(result.sigma_pred[1] - 15.0) < 1e-6
 
 
 def test_set_mode_zero_values_deactivate():
