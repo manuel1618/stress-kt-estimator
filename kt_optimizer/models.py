@@ -102,32 +102,30 @@ def expand_kt_to_canonical(
 ) -> tuple[list[str], list[float]]:
     """Return Kt names and values in canonical order, always 12 entries.
 
-    Convention: each slot represents the stress contribution per unit force
-    **magnitude** in that direction.
+    Convention: Kt values are **non-negative** stress amplification factors
+    that multiply **signed** forces to produce signed stresses.
 
     - For INDIVIDUAL entries (``Fx+`` / ``Fx-`` already in *kt_names*): the
-      solver coefficient is used directly — it already multiplies ``|F|``.
+      solver coefficients are used directly. Both Kt+ and Kt- are non-negative
+      and can differ (asymmetric behavior).
     - For LINKED entries (only ``Fx`` in *kt_names*): the single coefficient
-      ``k`` multiplies the **signed** force.  Converting to per-magnitude:
-      ``Fx+ = k`` (positive F: ``k × F = k × |F|``) and
-      ``Fx- = -k`` (negative F: ``k × F = k × (-|F|) = (-k) × |F|``).
+      ``k`` applies to both positive and negative forces. Display shows the
+      same value for both ``Fx+`` and ``Fx-`` (symmetric behavior).
 
-    To reconstruct stress from the displayed values: for each load case pick
-    the ``+`` or ``-`` slot depending on force sign, then
-    ``σ_contribution = Kt_slot × |F|``.
+    Physical relationship: σ = Kt × F (where both σ and F retain their signs).
+    - LINKED mode: Kt_Fx+ = Kt_Fx- (same geometric amplification)
+    - INDIVIDUAL mode: Kt_Fx+ and Kt_Fx- can differ (asymmetric material/geometry)
     """
     name_to_val = dict(zip(kt_names, kt_values))
     values_out: list[float] = []
     for name in CANONICAL_KT_ORDER:
         if name in name_to_val:
-            # INDIVIDUAL / SET: solver coefficient already per-magnitude.
+            # INDIVIDUAL / SET: use solver coefficient directly
             values_out.append(name_to_val[name])
         else:
-            # LINKED: single k for signed force; convert to per-magnitude.
+            # LINKED: single k for both + and - directions (symmetric)
             base = name[:-1]  # "Fx+" -> "Fx", "Fx-" -> "Fx"
             raw = name_to_val[base]
-            if name.endswith("+"):
-                values_out.append(raw)
-            else:
-                values_out.append(-raw)
+            # Display same value for both + and - (no sign flip)
+            values_out.append(raw)
     return list(CANONICAL_KT_ORDER), values_out

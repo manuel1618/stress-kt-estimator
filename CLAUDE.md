@@ -49,6 +49,40 @@ kt_optimizer/
 - Conservative constraint: predicted >= actual for all load cases
 - CSV column aliasing: Drag->Fx, Side->Fy, Vertical->Fz, etc.
 
+## Sign Conventions
+
+**Stress Concentration Factors (Kt):**
+- Always non-negative: Kt ≥ 0 (enforced by LP bounds)
+- Represents geometric stress amplification factor
+- Physical property independent of load direction
+
+**Forces:**
+- Signed values: F ∈ ℝ
+- Positive = tension/+direction, Negative = compression/-direction
+
+**Stresses:**
+- Signed values: σ ∈ ℝ
+- Sign matches physical behavior (tension +, compression -)
+
+**LINKED Mode (Symmetric Behavior):**
+- Single Kt per component applies to both tension and compression
+- Relationship: σ = Kt × F (where both σ and F retain their signs)
+- Display shows same Kt for Fx+ and Fx- (not negated)
+- Example: Kt_Fx = 2.0 means F = +100 → σ = +200, F = -100 → σ = -200
+
+**INDIVIDUAL Mode (Asymmetric Behavior):**
+- Separate Kt+ and Kt- per component (both non-negative)
+- Force matrix split preserves signs: f_pos = max(F, 0), f_neg = min(F, 0)
+- Relationship: σ = Kt+ × max(F, 0) + Kt- × min(F, 0)
+- Allows asymmetric behavior (e.g., buckling, material asymmetry)
+- Example: Kt_Fx+ = 2.0, Kt_Fx- = 3.0 means:
+  - F = +100 → σ = 2.0 × 100 = +200 (tension, lower amplification)
+  - F = -100 → σ = 3.0 × (-100) = -300 (compression, higher amplification)
+
+**SET Mode:**
+- User-specified fixed Kt values (not optimized)
+- Same physics as INDIVIDUAL mode: σ = Kt+ × max(F, 0) + Kt- × min(F, 0)
+
 ## Conventions
 
 - Python 3.10+, `from __future__ import annotations` in all modules

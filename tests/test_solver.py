@@ -17,7 +17,7 @@ def _sample_df():
         ["LC1", 100, 0, 0, 0, 0, 0, 100],
         ["LC2", 0, 100, 0, 0, 0, 0, 100],
         ["LC3", 40, 40, 0, 0, 0, 0, 90],
-        ["LC4", -100, 0, 0, 0, 0, 0, 80],
+        ["LC4", -100, 0, 0, 0, 0, 0, -80],  # Fixed: negative force → negative stress
     ]
     return pd.DataFrame(data, columns=TABLE_COLUMNS)
 
@@ -108,18 +108,16 @@ def test_find_minimal_unlink_returns_valid_config():
     assert len(unlinked) <= 6
 
 
-def test_negative_kt_values_propagate_when_unconstrained():
-    """Canonical Kt slots allow stress reconstruction via Kt_slot × |F|.
+def test_linked_mode_same_kt_for_both_signs():
+    """LINKED mode: Kt_Fx+ should equal Kt_Fx-, both non-negative.
 
-    With negative Fx and positive stress the LINKED solver finds k = -1.0.
-    Canonical conversion: Fx+ = k = -1.0, Fx- = -k = 1.0.
-    Reconstruction: Fx+ × |F| gives negative stress (correct for positive F),
-    Fx- × |F| gives positive stress (correct for negative F).
+    Physics: σ = Kt × F where Kt ≥ 0 is a geometric property.
+    Stress sign comes from force sign, not from Kt sign.
     """
     df = pd.DataFrame(
         [
-            ["LC1", -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0],
-            ["LC2", -2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0],
+            ["LC1", 100.0, 0.0, 0.0, 0.0, 0.0, 0.0, 200.0],   # Tension: Kt ≈ 2
+            ["LC2", -100.0, 0.0, 0.0, 0.0, 0.0, 0.0, -200.0], # Compression: Kt ≈ 2
         ],
         columns=TABLE_COLUMNS,
     )
@@ -129,19 +127,116 @@ def test_negative_kt_values_propagate_when_unconstrained():
         safety_factor=1.0,
     )
     result = solve(df, settings)
-    assert result.success
+    assert result.success, f"Solver failed: {result.message}"
+
+    # Find Fx+ and Fx- in canonical results
     assert "Fx+" in result.kt_names and "Fx-" in result.kt_names
     fx_plus_idx = result.kt_names.index("Fx+")
     fx_minus_idx = result.kt_names.index("Fx-")
     fx_plus_val = result.kt_values[fx_plus_idx]
     fx_minus_val = result.kt_values[fx_minus_idx]
-    # LINKED k = -1: Fx+ = -1 (negative), Fx- = +1 (positive).
-    # Reconstruction: for F < 0 (the only cases here), use Fx- × |F|:
-    #   LC1: 1.0 × 1.0 = 1.0 ✓,  LC2: 1.0 × 2.0 = 2.0 ✓
-    assert fx_plus_val < 0.0  # k is negative
-    assert fx_minus_val > 0.0  # -k is positive
-    assert abs(fx_plus_val - (-1.0)) < 1e-6
-    assert abs(fx_minus_val - 1.0) < 1e-6
+
+    # LINKED mode: same Kt for both directions
+    assert abs(fx_plus_val - fx_minus_val) < 1e-6, \
+        f"LINKED mode should have same Kt: Fx+={fx_plus_val}, Fx-={fx_minus_val}"
+
+    # Both should be non-negative
+    assert fx_plus_val >= -1e-6, f"Kt should be non-negative: Fx+={fx_plus_val}"
+    assert fx_minus_val >= -1e-6, f"Kt should be non-negative: Fx-={fx_minus_val}"
+
+    # Expected value around 2.0 (200 / 100)
+    assert abs(fx_plus_val - 2.0) < 0.1, f"Expected Kt ≈ 2.0, got {fx_plus_val}"
+
+    # Verify stress predictions preserve signs
+    assert result.sigma_pred[0] > 0, "Positive force should give positive stress"
+    assert result.sigma_pred[1] < 0, "Negative force should give negative stress"
+
+    # Conservative constraint satisfied
+    assert result.min_error >= -1e-6, "Conservative constraint violated"
+
+
+def test_individual_mode_asymmetric_kt():
+    """INDIVIDUAL mode: Kt+ and Kt- can differ, both non-negative.
+
+    Tests asymmetric behavior where compression has higher stress amplification
+    than tension (e.g., due to buckling or material asymmetry).
+    """
+    df = pd.DataFrame(
+        [
+            ["LC1", 100.0, 0.0, 0.0, 0.0, 0.0, 0.0, 200.0],   # Tension: Kt+ ≈ 2
+            ["LC2", -100.0, 0.0, 0.0, 0.0, 0.0, 0.0, -300.0], # Compression: Kt- ≈ 3
+        ],
+        columns=TABLE_COLUMNS,
+    )
+    settings = SolverSettings(
+        use_separate_sign=True,
+        sign_mode_per_component=[SignMode.INDIVIDUAL] + [SignMode.LINKED] * 5,
+        objective_mode=ObjectiveMode.MINIMIZE_MAX_DEVIATION,
+        safety_factor=1.0,
+    )
+    result = solve(df, settings)
+    assert result.success, f"Solver failed: {result.message}"
+
+    # Find Fx+ and Fx- in results
+    assert "Fx+" in result.kt_names and "Fx-" in result.kt_names
+    fx_plus_idx = result.kt_names.index("Fx+")
+    fx_minus_idx = result.kt_names.index("Fx-")
+    fx_plus_val = result.kt_values[fx_plus_idx]
+    fx_minus_val = result.kt_values[fx_minus_idx]
+
+    # INDIVIDUAL mode: can have different values
+    assert abs(fx_plus_val - fx_minus_val) > 0.5, \
+        "Expected asymmetric Kt values for different load directions"
+
+    # Both should be non-negative
+    assert fx_plus_val >= -1e-6, f"Kt+ should be non-negative: {fx_plus_val}"
+    assert fx_minus_val >= -1e-6, f"Kt- should be non-negative: {fx_minus_val}"
+
+    # Expected values: Kt+ ≈ 2.0, Kt- ≈ 3.0
+    assert abs(fx_plus_val - 2.0) < 0.1, f"Expected Kt+ ≈ 2.0, got {fx_plus_val}"
+    assert abs(fx_minus_val - 3.0) < 0.1, f"Expected Kt- ≈ 3.0, got {fx_minus_val}"
+
+    # Verify stress predictions preserve signs
+    assert result.sigma_pred[0] > 0, "Positive force should give positive stress"
+    assert result.sigma_pred[1] < 0, "Negative force should give negative stress"
+
+    # Conservative constraint satisfied
+    assert result.min_error >= -1e-6, "Conservative constraint violated"
+
+
+def test_kt_nonnegativity_enforced():
+    """Verify solver enforces Kt ≥ 0 for all modes.
+
+    Cases where force and stress have opposite signs should be rejected as
+    physically inconsistent (would require negative Kt).
+    """
+    # Pathological case: negative force, positive stress (impossible with Kt ≥ 0)
+    df = pd.DataFrame(
+        [
+            ["LC1", -100.0, 0.0, 0.0, 0.0, 0.0, 0.0, 200.0],  # σ = Kt × F → 200 = Kt × (-100) → Kt = -2 ✗
+        ],
+        columns=TABLE_COLUMNS,
+    )
+    settings = SolverSettings(
+        use_separate_sign=False,
+        objective_mode=ObjectiveMode.MINIMIZE_MAX_DEVIATION,
+        safety_factor=1.0,
+    )
+    result = solve(df, settings)
+
+    # Solver should either:
+    # 1. Fail to find solution (infeasible), OR
+    # 2. Find solution with Kt ≥ 0 but violate conservative constraint
+    if result.success:
+        # If it succeeded, all Kt values must be non-negative
+        for kt_val in result.kt_values:
+            assert kt_val >= -1e-6, f"Kt should be non-negative, got {kt_val}"
+        # But it should violate the conservative constraint (min_error < 0)
+        assert result.min_error < -1e-3, \
+            "Should not satisfy conservative constraint with Kt ≥ 0 for inconsistent data"
+    else:
+        # Expected: infeasible
+        assert "infeasible" in result.message.lower() or "failed" in result.message.lower()
 
 
 def test_constraint_status_strongly_under_constrained():
@@ -190,10 +285,11 @@ def test_set_mode_excludes_design_variables():
 def test_set_mode_fixed_values_contribute_to_prediction():
     """SET Kt values should contribute to the predicted stress."""
     # Two cases: only Fx active. Set Fx with Kt+=2.0, Kt-=1.5
+    # Physics: σ = Kt+ × max(F,0) + Kt- × min(F,0)
     df = pd.DataFrame(
         [
             ["LC1", 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 20.0],
-            ["LC2", -10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 15.0],
+            ["LC2", -10.0, 0.0, 0.0, 0.0, 0.0, 0.0, -15.0],  # Fixed: negative force → negative stress
         ],
         columns=TABLE_COLUMNS,
     )
@@ -204,9 +300,9 @@ def test_set_mode_fixed_values_contribute_to_prediction():
     )
     result = solve(df, settings)
     assert result.success
-    # Predicted: LC1 = 10*2.0 = 20, LC2 = 10*1.5 = 15
+    # Predicted: LC1 = 2.0 × 10 = 20, LC2 = 1.5 × (-10) = -15
     assert abs(result.sigma_pred[0] - 20.0) < 1e-6
-    assert abs(result.sigma_pred[1] - 15.0) < 1e-6
+    assert abs(result.sigma_pred[1] - (-15.0)) < 1e-6
 
 
 def test_set_mode_zero_values_deactivate():

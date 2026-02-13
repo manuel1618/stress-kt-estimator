@@ -88,14 +88,14 @@ def _build_force_matrix(df: pd.DataFrame, settings: SolverSettings):
             if fixed_vals and i < len(fixed_vals):
                 kt_plus, kt_minus = fixed_vals[i]
             f_pos = np.maximum(f[:, i], 0.0)
-            f_neg = np.abs(np.minimum(f[:, i], 0.0))
+            f_neg = np.minimum(f[:, i], 0.0)  # Preserve sign (≤ 0)
             fixed_offset += f_pos * kt_plus + f_neg * kt_minus
         elif mode == SignMode.LINKED:
             cols_list.append(f[:, i : i + 1])
             names.append(comp)
         else:
             f_pos = np.maximum(f[:, i], 0.0).reshape(-1, 1)
-            f_neg = np.abs(np.minimum(f[:, i], 0.0)).reshape(-1, 1)
+            f_neg = np.minimum(f[:, i], 0.0).reshape(-1, 1)  # Preserve sign (≤ 0)
             cols_list.append(f_pos)
             cols_list.append(f_neg)
             names.append(f"{comp}+")
@@ -107,8 +107,8 @@ def _build_force_matrix(df: pd.DataFrame, settings: SolverSettings):
 
 
 def _build_bounds(n_vars: int):
-    # No nonnegativity constraint on Kt: allow signed values.
-    return [(None, None)] * n_vars
+    # Enforce Kt ≥ 0: stress concentration factors are non-negative (physical property).
+    return [(0, None)] * n_vars
 
 
 def _solve_min_max_deviation(f_mat, sigma, settings: SolverSettings):
@@ -185,7 +185,7 @@ def _signed_kt_sigma(
                     k_val = kt_plus
                 else:
                     k_val = kt_minus
-                s += k_val * abs(fval)
+                s += k_val * fval  # Use signed force (consistent with force matrix)
             elif (
                 settings.use_separate_sign
                 and modes
