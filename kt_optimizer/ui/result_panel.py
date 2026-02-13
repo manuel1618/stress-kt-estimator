@@ -3,8 +3,11 @@ from __future__ import annotations
 import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QHBoxLayout,
     QLabel,
+    QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -15,10 +18,22 @@ from kt_optimizer.models import SolverResult
 
 
 class ResultPanel(QWidget):
+    recalc_requested = Signal(list, list)  # kt_names, kt_values
+
     def __init__(self) -> None:
         super().__init__()
         layout = QVBoxLayout(self)
         self.summary = QLabel("No results yet")
+
+        # Kt table header with recalc button
+        kt_header = QHBoxLayout()
+        kt_label = QLabel("Kt Values (editable):")
+        self.recalc_btn = QPushButton("Recalculate Deviations")
+        self.recalc_btn.setEnabled(False)
+        kt_header.addWidget(kt_label)
+        kt_header.addWidget(self.recalc_btn)
+        kt_header.addStretch()
+
         # One row, one column per Kt direction (widescreen: fx | -fx | fy | ...)
         self.kt_table = QTableWidget(1, 0)
         self.kt_table.verticalHeader().setVisible(False)
@@ -28,10 +43,30 @@ class ResultPanel(QWidget):
         self.canvas = FigureCanvas(self.fig)
 
         layout.addWidget(self.summary)
+        layout.addLayout(kt_header)
         layout.addWidget(self.kt_table)
         layout.addWidget(self.canvas)
 
+        self.recalc_btn.clicked.connect(self._on_recalc_clicked)
+        self.current_result = None
+
+    def _on_recalc_clicked(self) -> None:
+        """Emit signal to recalculate with user-modified Kt values."""
+        kt_names = []
+        kt_values = []
+        for col in range(self.kt_table.columnCount()):
+            kt_names.append(self.kt_table.horizontalHeaderItem(col).text())
+            try:
+                value = float(self.kt_table.item(0, col).text())
+                kt_values.append(value)
+            except (ValueError, AttributeError):
+                kt_values.append(0.0)
+        self.recalc_requested.emit(kt_names, kt_values)
+
     def update_result(self, result: SolverResult) -> None:
+        self.current_result = result
+        self.recalc_btn.setEnabled(True)
+
         summary_base = (
             f"Worst margin: {result.worst_case_margin:+.3f}% | "
             f"Max over: {result.max_overprediction:.4f} | "
@@ -55,9 +90,10 @@ class ResultPanel(QWidget):
                 txt = "system over-constrained / possibly infeasible"
             warnings.append(txt)
 
-        if result.diagnostics and result.diagnostics.get("signed_kt_inconsistent"):
+        # Check for non-conservative predictions
+        if result.max_underprediction < -1e-6:
             warnings.append(
-                "signed-Kt interpretation may produce negative stress for some cases"
+                f"NON-CONSERVATIVE: underpredicting by {abs(result.max_underprediction):.4f}"
             )
 
         if warnings:
@@ -72,7 +108,8 @@ class ResultPanel(QWidget):
         self.kt_table.setColumnCount(len(result.kt_names))
         self.kt_table.setHorizontalHeaderLabels(result.kt_names)
         for col, value in enumerate(result.kt_values):
-            self.kt_table.setItem(0, col, QTableWidgetItem(f"{value:.6f}"))
+            item = QTableWidgetItem(f"{value:.6f}")
+            self.kt_table.setItem(0, col, item)
 
         self.fig.clear()
         ax1 = self.fig.add_subplot(121)

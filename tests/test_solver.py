@@ -3,13 +3,19 @@ from __future__ import annotations
 import pandas as pd
 
 from kt_optimizer.models import (
+    CANONICAL_KT_ORDER,
     FORCE_COLUMNS,
     TABLE_COLUMNS,
     ObjectiveMode,
     SignMode,
     SolverSettings,
 )
-from kt_optimizer.solver import find_minimal_unlink, solve, suggest_unlink_from_data
+from kt_optimizer.solver import (
+    find_minimal_unlink,
+    recalculate_with_kt,
+    solve,
+    suggest_unlink_from_data,
+)
 
 
 def _sample_df():
@@ -254,3 +260,44 @@ def test_set_mode_constraint_status_reflects_fewer_variables():
     result = solve(df, settings)
     assert result.diagnostics["n_kt_variables"] == 2
     assert result.diagnostics["constraint_status"] == "well_determined"
+
+
+def test_recalculate_with_kt_conservative():
+    """Test recalculate_with_kt with conservative Kt values."""
+    df = _sample_df()
+    settings = SolverSettings(use_separate_sign=True)
+
+    # First solve to get optimized Kt values
+    original_result = solve(df, settings)
+    assert original_result.success
+
+    # Recalculate with the same Kt values - should be conservative
+    recalc_result = recalculate_with_kt(
+        df,
+        original_result.kt_names,
+        original_result.kt_values,
+        settings
+    )
+    assert recalc_result.success
+    assert recalc_result.max_underprediction >= -1e-6
+
+    # Predictions should match
+    for i in range(len(original_result.sigma_pred)):
+        assert abs(original_result.sigma_pred[i] - recalc_result.sigma_pred[i]) < 1e-3
+
+
+def test_recalculate_with_kt_non_conservative():
+    """Test recalculate_with_kt with non-conservative Kt values."""
+    df = _sample_df()
+    settings = SolverSettings(use_separate_sign=True)
+
+    # Use artificially low Kt values that will underpredict
+    low_kt_values = [0.1] * 12
+    kt_names = list(CANONICAL_KT_ORDER)
+
+    recalc_result = recalculate_with_kt(df, kt_names, low_kt_values, settings)
+
+    # Should detect non-conservative predictions
+    assert not recalc_result.success
+    assert recalc_result.max_underprediction < -1e-6
+    assert "NON-CONSERVATIVE" in recalc_result.message

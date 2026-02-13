@@ -372,6 +372,112 @@ def find_minimal_unlink(
     return (best_modes or fallback, best_result)
 
 
+def recalculate_with_kt(
+    df: pd.DataFrame,
+    kt_names: list[str],
+    kt_values: list[float],
+    settings: SolverSettings,
+    logger: logging.Logger | None = None,
+) -> SolverResult:
+    """Recalculate deviations with user-provided Kt values.
+
+    This does not perform optimization, but evaluates the given Kt values
+    against the load cases to compute margins, errors, and diagnostics.
+    """
+    logger = logger or logging.getLogger("kt_optimizer")
+    normalized = _normalize_columns(df)
+
+    logger.info("Recalculating with %d user-provided Kt values", len(kt_values))
+    if normalized.empty:
+        return SolverResult(
+            success=False, message="No valid load cases with Stress provided"
+        )
+
+    # Build force matrix to get the structure
+    f_mat, design_kt_names, fixed_offset = _build_force_matrix(normalized, settings)
+    sigma = normalized["Stress"].to_numpy(dtype=float).copy()
+    sigma *= float(settings.safety_factor)
+
+    # Map user-provided Kt values to the design variables
+    # The user provides canonical names (Fx+, Fx-, etc), but we need to
+    # extract only the design variables (not SET components)
+    kt_map = dict(zip(kt_names, kt_values))
+    k = np.zeros(len(design_kt_names))
+    for i, name in enumerate(design_kt_names):
+        k[i] = kt_map.get(name, 0.0)
+
+    # Compute predicted stress
+    sigma_pred = (f_mat @ k if len(k) > 0 else np.zeros_like(sigma)) + fixed_offset
+    error = sigma_pred - sigma
+    min_error = float(np.min(error))
+    max_error = float(np.max(error))
+    rms_error = float(np.sqrt(np.mean(np.square(error))))
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        margin_pct = np.where(
+            sigma != 0, (sigma_pred - sigma) / np.abs(sigma) * 100.0, np.nan
+        )
+
+    per_case: list[ValidationCase] = []
+    for row_idx, row in normalized.iterrows():
+        mc = float(margin_pct[row_idx]) if not np.isnan(margin_pct[row_idx]) else 0.0
+        per_case.append(
+            ValidationCase(
+                case_name=str(row["Case Name"]),
+                actual=float(sigma[row_idx]),
+                predicted=float(sigma_pred[row_idx]),
+                margin_pct=mc,
+            )
+        )
+        logger.info(
+            "Case %s | Actual: %.3f | Predicted: %.3f | Margin: %+.2f%%",
+            row["Case Name"],
+            float(sigma[row_idx]),
+            float(sigma_pred[row_idx]),
+            mc,
+        )
+
+    # Check conservativeness
+    success = min_error >= -1e-6
+    if success:
+        logger.info("All load cases satisfied conservatively")
+        message = "User-provided Kt values are conservative"
+    else:
+        logger.warning(
+            "User-provided Kt values are NON-CONSERVATIVE (max underprediction: %.4f)",
+            min_error
+        )
+        message = f"NON-CONSERVATIVE: underpredicting by {abs(min_error):.4f}"
+
+    cond_number = float(np.linalg.cond(f_mat)) if f_mat.size else 0.0
+    n_cases, n_vars = f_mat.shape
+    rank = int(np.linalg.matrix_rank(f_mat)) if f_mat.size else 0
+
+    return SolverResult(
+        success=success,
+        message=message,
+        kt_names=list(kt_names),
+        kt_values=list(kt_values),
+        sigma_target=sigma.tolist(),
+        sigma_pred=sigma_pred.tolist(),
+        min_error=min_error,
+        max_error=max_error,
+        rms_error=rms_error,
+        worst_case_margin=float(np.nanmin(margin_pct)) if len(margin_pct) else 0.0,
+        max_overprediction=float(np.max(error)),
+        max_underprediction=float(np.min(error)),
+        condition_number=cond_number,
+        sensitivity_violations=0,
+        diagnostics={
+            "n_load_cases": n_cases,
+            "n_kt_variables": n_vars,
+            "rank": rank,
+            "constraint_status": "user_provided",
+        },
+        per_case=per_case,
+    )
+
+
 def solve(
     df: pd.DataFrame, settings: SolverSettings, logger: logging.Logger | None = None
 ) -> SolverResult:

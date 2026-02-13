@@ -27,7 +27,12 @@ from PySide6.QtWidgets import (
 from kt_optimizer.export_excel import export_to_excel
 from kt_optimizer.logger import attach_gui_handler, build_logger
 from kt_optimizer.models import FORCE_COLUMNS, ObjectiveMode, SignMode, SolverSettings
-from kt_optimizer.solver import find_minimal_unlink, solve, suggest_unlink_from_data
+from kt_optimizer.solver import (
+    find_minimal_unlink,
+    recalculate_with_kt,
+    solve,
+    suggest_unlink_from_data,
+)
 from kt_optimizer.ui.result_panel import ResultPanel
 from kt_optimizer.ui.table_model import LoadCaseTableModel
 
@@ -121,6 +126,7 @@ class MainWindow(QMainWindow):
         self.solve_btn.clicked.connect(self._solve)
         self.suggest_unlink_btn.clicked.connect(self._suggest_unlink)
         self.export_excel_btn.clicked.connect(self._export_excel)
+        self.results_panel.recalc_requested.connect(self._recalculate_with_user_kt)
 
         self.last_result = None
 
@@ -468,6 +474,34 @@ class MainWindow(QMainWindow):
 
         # Surface constraint issues very prominently so they are hard to miss.
         self._show_constraint_warning(result)
+
+    def _recalculate_with_user_kt(self, kt_names: list, kt_values: list) -> None:
+        """Recalculate deviations with user-modified Kt values."""
+        if self.table_model.df.empty:
+            QMessageBox.warning(self, "No data", "Load cases are required")
+            return
+
+        try:
+            settings = self._settings()
+        except ValueError:
+            QMessageBox.critical(self, "Input Error", "Safety factor must be numeric")
+            return
+
+        self.logger.info("Recalculating with user-modified Kt values...")
+        result = recalculate_with_kt(
+            self.table_model.df, kt_names, kt_values, settings, logger=self.logger
+        )
+        self.last_result = result
+        self.results_panel.update_result(result)
+
+        if not result.success:
+            QMessageBox.warning(
+                self,
+                "Non-conservative warning",
+                f"{result.message}\n\n"
+                "The modified Kt values do not satisfy all load cases conservatively. "
+                "Some actual stresses are higher than predicted.",
+            )
 
     def _export_excel(self) -> None:
         if self.last_result is None:
