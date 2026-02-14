@@ -40,14 +40,14 @@ kt_optimizer/
     └── style.qss        # Qt stylesheet
 ```
 
-**Data flow:** CSV input -> LoadCaseTableModel (editable table) -> SolverSettings configured by user -> `solver.solve()` (normalize columns, build force matrix, linprog) -> SolverResult (Kt values, margins, diagnostics) -> ResultPanel (charts) / export_excel (XLSX).
+**Data flow:** CSV input -> LoadCaseTableModel (editable table) -> SolverSettings configured by user -> `solver.solve()` (validate columns, build force matrix, linprog) -> SolverResult (Kt values, margins, diagnostics) -> ResultPanel (charts) / export_excel (XLSX).
 
 **Key solver concepts:**
 - Sign modes: LINKED (single Kt per component) vs INDIVIDUAL (separate +/- Kt per component)
 - `suggest_unlink_from_data()`: heuristic to recommend which components need +/- split
 - `find_minimal_unlink()`: brute-force search for minimal unlinking with acceptable fit
 - Conservative constraint: predicted >= actual for all load cases
-- CSV column aliasing: Drag->Fx, Side->Fy, Vertical->Fz, etc.
+- CSV columns: Exact column names required (Case Name, Fx, Fy, Fz, Mx, My, Mz, Stress)
 
 ## Sign Conventions
 

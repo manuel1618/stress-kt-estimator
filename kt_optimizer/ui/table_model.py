@@ -6,38 +6,29 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from kt_optimizer.models import FORCE_COLUMNS, TABLE_COLUMNS
 
 
-def _normalize_loaded_csv(data: pd.DataFrame) -> pd.DataFrame:
-    renamed: dict[str, str] = {}
-    for col in data.columns:
-        key = str(col).strip().lower().replace(" ", "")
-        if key in {"lc", "loadcase", "casename", "case", "id"}:
-            renamed[col] = "Case Name"
-        elif key in {"fx", "drag"}:
-            renamed[col] = "Fx"
-        elif key in {"fy", "side"}:
-            renamed[col] = "Fy"
-        elif key in {"fz", "vertical"}:
-            renamed[col] = "Fz"
-        elif key in {"mx", "roll", "-mx"}:
-            renamed[col] = "Mx"
-        elif key in {"my", "pitch", "-my"}:
-            renamed[col] = "My"
-        elif key in {"mz", "yaw", "-mz"}:
-            renamed[col] = "Mz"
-        elif key in {"stress", "sigma", "σ"}:
-            renamed[col] = "Stress"
+def _validate_and_prepare_csv(data: pd.DataFrame) -> pd.DataFrame:
+    """Validate required columns are present and prepare data for table.
 
-    normalized = data.rename(columns=renamed).copy()
+    Required columns: Case Name, Fx, Fy, Fz, Mx, My, Mz, Stress
+    All column names must match exactly (case-sensitive).
+    """
+    # Check for required columns
+    missing_cols = [col for col in TABLE_COLUMNS if col not in data.columns]
+    if missing_cols:
+        raise ValueError(
+            f"Missing required columns: {missing_cols}. "
+            f"Required columns are: {TABLE_COLUMNS}"
+        )
 
-    if "Case Name" not in normalized.columns:
-        normalized["Case Name"] = [f"LC{i + 1}" for i in range(len(normalized))]
+    normalized = data.copy()
 
+    # Convert force/moment columns and stress to numeric
     for col in FORCE_COLUMNS + ["Stress"]:
-        if col not in normalized.columns:
-            normalized[col] = 0.0
         normalized[col] = pd.to_numeric(normalized[col], errors="coerce").fillna(0.0)
 
+    # Convert Case Name to string
     normalized["Case Name"] = normalized["Case Name"].astype(str)
+
     return normalized[TABLE_COLUMNS]
 
 
@@ -98,7 +89,7 @@ class LoadCaseTableModel(QAbstractTableModel):
     def load_csv(self, path: str) -> None:
         data = pd.read_csv(path, encoding="utf-8-sig")
         self.beginResetModel()
-        self.df = _normalize_loaded_csv(data)
+        self.df = _validate_and_prepare_csv(data)
         self.endResetModel()
 
     def save_csv(self, path: str) -> None:

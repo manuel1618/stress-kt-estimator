@@ -33,7 +33,8 @@ def test_minmax_mode_solution():
     assert len(result.kt_values) == 12
 
 
-def test_flexible_column_mapping_works():
+def test_exact_column_names_required():
+    """Verify that exact column names are required (no aliasing)."""
     df = pd.DataFrame(
         {
             "LC": [3, 5, 36, 38, 59],
@@ -45,10 +46,12 @@ def test_flexible_column_mapping_works():
         }
     )
 
-    result = solve(df, SolverSettings(use_separate_sign=True))
-    assert result.success
-    assert len(result.per_case) == 5
-    assert min(c.predicted - c.actual for c in result.per_case) >= -1e-6
+    # Should raise ValueError due to missing required columns
+    try:
+        result = solve(df, SolverSettings(use_separate_sign=True))
+        assert False, "Expected ValueError for missing columns"
+    except ValueError as e:
+        assert "Missing required columns" in str(e)
 
 
 def test_bad_safety_factor_fails():
@@ -116,8 +119,8 @@ def test_linked_mode_same_kt_for_both_signs():
     """
     df = pd.DataFrame(
         [
-            ["LC1", 100.0, 0.0, 0.0, 0.0, 0.0, 0.0, 200.0],   # Tension: Kt ≈ 2
-            ["LC2", -100.0, 0.0, 0.0, 0.0, 0.0, 0.0, -200.0], # Compression: Kt ≈ 2
+            ["LC1", 100.0, 0.0, 0.0, 0.0, 0.0, 0.0, 200.0],  # Tension: Kt ≈ 2
+            ["LC2", -100.0, 0.0, 0.0, 0.0, 0.0, 0.0, -200.0],  # Compression: Kt ≈ 2
         ],
         columns=TABLE_COLUMNS,
     )
@@ -137,8 +140,9 @@ def test_linked_mode_same_kt_for_both_signs():
     fx_minus_val = result.kt_values[fx_minus_idx]
 
     # LINKED mode: same Kt for both directions
-    assert abs(fx_plus_val - fx_minus_val) < 1e-6, \
+    assert abs(fx_plus_val - fx_minus_val) < 1e-6, (
         f"LINKED mode should have same Kt: Fx+={fx_plus_val}, Fx-={fx_minus_val}"
+    )
 
     # Both should be non-negative
     assert fx_plus_val >= -1e-6, f"Kt should be non-negative: Fx+={fx_plus_val}"
@@ -163,8 +167,17 @@ def test_individual_mode_asymmetric_kt():
     """
     df = pd.DataFrame(
         [
-            ["LC1", 100.0, 0.0, 0.0, 0.0, 0.0, 0.0, 200.0],   # Tension: Kt+ ≈ 2
-            ["LC2", -100.0, 0.0, 0.0, 0.0, 0.0, 0.0, 300.0], # |F|=100, stress=300 → Kt- ≈ 3
+            ["LC1", 100.0, 0.0, 0.0, 0.0, 0.0, 0.0, 200.0],  # Tension: Kt+ ≈ 2
+            [
+                "LC2",
+                -100.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                300.0,
+            ],  # |F|=100, stress=300 → Kt- ≈ 3
         ],
         columns=TABLE_COLUMNS,
     )
@@ -185,8 +198,9 @@ def test_individual_mode_asymmetric_kt():
     fx_minus_val = result.kt_values[fx_minus_idx]
 
     # INDIVIDUAL mode: can have different values
-    assert abs(fx_plus_val - fx_minus_val) > 0.5, \
+    assert abs(fx_plus_val - fx_minus_val) > 0.5, (
         "Expected asymmetric Kt values for different load directions"
+    )
 
     # Both should be non-negative
     assert fx_plus_val >= -1e-6, f"Kt+ should be non-negative: {fx_plus_val}"
@@ -212,7 +226,16 @@ def test_kt_nonnegativity_enforced():
     # Pathological case: negative force, positive stress (impossible with Kt ≥ 0)
     df = pd.DataFrame(
         [
-            ["LC1", -100.0, 0.0, 0.0, 0.0, 0.0, 0.0, 200.0],  # σ = Kt × F → 200 = Kt × (-100) → Kt = -2 ✗
+            [
+                "LC1",
+                -100.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                200.0,
+            ],  # σ = Kt × F → 200 = Kt × (-100) → Kt = -2 ✗
         ],
         columns=TABLE_COLUMNS,
     )
@@ -231,11 +254,14 @@ def test_kt_nonnegativity_enforced():
         for kt_val in result.kt_values:
             assert kt_val >= -1e-6, f"Kt should be non-negative, got {kt_val}"
         # But it should violate the conservative constraint (min_error < 0)
-        assert result.min_error < -1e-3, \
+        assert result.min_error < -1e-3, (
             "Should not satisfy conservative constraint with Kt ≥ 0 for inconsistent data"
+        )
     else:
         # Expected: infeasible
-        assert "infeasible" in result.message.lower() or "failed" in result.message.lower()
+        assert (
+            "infeasible" in result.message.lower() or "failed" in result.message.lower()
+        )
 
 
 def test_constraint_status_strongly_under_constrained():
@@ -272,8 +298,12 @@ def test_set_mode_excludes_design_variables():
     settings_set = SolverSettings(
         use_separate_sign=True,
         sign_mode_per_component=[
-            SignMode.SET, SignMode.SET,
-            SignMode.LINKED, SignMode.LINKED, SignMode.LINKED, SignMode.LINKED,
+            SignMode.SET,
+            SignMode.SET,
+            SignMode.LINKED,
+            SignMode.LINKED,
+            SignMode.LINKED,
+            SignMode.LINKED,
         ],
         fixed_kt_values=[(1.0, 0.8), (1.0, 0.6), (0, 0), (0, 0), (0, 0), (0, 0)],
     )
@@ -288,7 +318,7 @@ def test_set_mode_fixed_values_contribute_to_prediction():
     """
     df = pd.DataFrame(
         [
-            ["LC1", 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 20.0],   # Kt+×10 = 20 → 2.0
+            ["LC1", 10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 20.0],  # Kt+×10 = 20 → 2.0
             ["LC2", -10.0, 0.0, 0.0, 0.0, 0.0, 0.0, 15.0],  # Kt-×10 = 15 → 1.5
         ],
         columns=TABLE_COLUMNS,
@@ -318,8 +348,12 @@ def test_set_mode_zero_values_deactivate():
     settings = SolverSettings(
         use_separate_sign=True,
         sign_mode_per_component=[
-            SignMode.SET, SignMode.LINKED,
-            SignMode.LINKED, SignMode.LINKED, SignMode.LINKED, SignMode.LINKED,
+            SignMode.SET,
+            SignMode.LINKED,
+            SignMode.LINKED,
+            SignMode.LINKED,
+            SignMode.LINKED,
+            SignMode.LINKED,
         ],
         fixed_kt_values=[(0, 0), (0, 0), (0, 0), (0, 0), (0, 0), (0, 0)],
     )
@@ -342,8 +376,12 @@ def test_set_mode_constraint_status_reflects_fewer_variables():
     settings = SolverSettings(
         use_separate_sign=True,
         sign_mode_per_component=[
-            SignMode.LINKED, SignMode.LINKED,
-            SignMode.SET, SignMode.SET, SignMode.SET, SignMode.SET,
+            SignMode.LINKED,
+            SignMode.LINKED,
+            SignMode.SET,
+            SignMode.SET,
+            SignMode.SET,
+            SignMode.SET,
         ],
         fixed_kt_values=[(0, 0), (0, 0), (0, 0), (0, 0), (0, 0), (0, 0)],
     )

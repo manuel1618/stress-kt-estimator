@@ -19,42 +19,32 @@ from kt_optimizer.models import (
 )
 
 
-def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Accept common variants from spreadsheet exports and map to canonical columns."""
+def _validate_and_prepare_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Validate required columns are present and prepare data for solver.
+
+    Required columns: Case Name, Fx, Fy, Fz, Mx, My, Mz, Stress
+    All column names must match exactly (case-sensitive).
+    """
     work = df.copy()
-    renamed: dict[str, str] = {}
 
-    for col in work.columns:
-        key = str(col).strip().lower().replace(" ", "")
-        if key in {"lc", "loadcase", "casename", "case", "id"}:
-            renamed[col] = "Case Name"
-        elif key in {"fx", "drag"}:
-            renamed[col] = "Fx"
-        elif key in {"fy", "side"}:
-            renamed[col] = "Fy"
-        elif key in {"fz", "vertical"}:
-            renamed[col] = "Fz"
-        elif key in {"mx", "roll", "-mx"}:
-            renamed[col] = "Mx"
-        elif key in {"my", "pitch", "-my"}:
-            renamed[col] = "My"
-        elif key in {"mz", "yaw", "-mz"}:
-            renamed[col] = "Mz"
-        elif key in {"stress", "sigma", "σ"}:
-            renamed[col] = "Stress"
+    # Check for required columns
+    missing_cols = [col for col in TABLE_COLUMNS if col not in work.columns]
+    if missing_cols:
+        raise ValueError(
+            f"Missing required columns: {missing_cols}. "
+            f"Required columns are: {TABLE_COLUMNS}"
+        )
 
-    work = work.rename(columns=renamed)
-
-    if "Case Name" not in work.columns:
-        work["Case Name"] = [f"LC{i + 1}" for i in range(len(work))]
-
+    # Convert force/moment columns and stress to numeric
     for col in FORCE_COLUMNS + ["Stress"]:
-        if col not in work.columns:
-            work[col] = 0.0
         work[col] = pd.to_numeric(work[col], errors="coerce")
 
+    # Convert Case Name to string
     work["Case Name"] = work["Case Name"].astype(str)
+
+    # Drop rows with NaN stress values
     work = work.dropna(subset=["Stress"]).reset_index(drop=True)
+
     return work[TABLE_COLUMNS]
 
 
@@ -233,7 +223,7 @@ def recalc_with_fixed_kt(
     CANONICAL_KT_ORDER.
     """
     logger = logger or logging.getLogger("kt_optimizer")
-    normalized = _normalize_columns(df)
+    normalized = _validate_and_prepare_columns(df)
 
     logger.info("Recalc with fixed Kt: %d load cases", len(normalized))
     if normalized.empty:
@@ -343,7 +333,7 @@ def suggest_unlink_from_data(
     Returns list of component names (e.g. ['Fy']) that are good candidates to set
     to Individual (+/- separate).
     """
-    normalized = _normalize_columns(df)
+    normalized = _validate_and_prepare_columns(df)
     if len(normalized) < 2:
         return []
 
@@ -407,7 +397,7 @@ def find_minimal_unlink(
     (all INDIVIDUAL, last result) so the UI can still show something.
     """
     logger = logger or logging.getLogger("kt_optimizer")
-    normalized = _normalize_columns(df)
+    normalized = _validate_and_prepare_columns(df)
     if normalized.empty:
         return ([SignMode.INDIVIDUAL] * len(FORCE_COLUMNS), None)
     mean_stress = float(normalized["Stress"].mean())
@@ -486,7 +476,7 @@ def solve(
     df: pd.DataFrame, settings: SolverSettings, logger: logging.Logger | None = None
 ) -> SolverResult:
     logger = logger or logging.getLogger("kt_optimizer")
-    normalized = _normalize_columns(df)
+    normalized = _validate_and_prepare_columns(df)
 
     logger.info("Parsed %d load cases", len(normalized))
     if normalized.empty:

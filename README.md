@@ -40,16 +40,10 @@ uv run python -m kt_optimizer.main
 uv run pytest
 ```
 
-## CSV input notes
+## CSV input requirements
 
-The app accepts either canonical columns:
+The CSV file must contain exactly these column names (case-sensitive):
 
 `Case Name, Fx, Fy, Fz, Mx, My, Mz, Stress`
 
-or common aliases from spreadsheets, including:
-
-- `LC` / `Case` / `LoadCase` → `Case Name`
-- `Drag` → `Fx`
-- `Side` → `Fy`
-- `Vertical` → `Fz`
-- `-Mz` → `Mz`
+All column names must match exactly. No aliases or alternative names are accepted.
