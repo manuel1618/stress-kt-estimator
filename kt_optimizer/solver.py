@@ -70,8 +70,8 @@ def _build_force_matrix(df: pd.DataFrame, settings: SolverSettings):
 
     # Per-component: linked => one signed column; individual => two columns (+, -)
     # SET => no columns, contribution goes into fixed_offset
-    # For INDIVIDUAL/SET negative side we use magnitude |min(F,0)| so that Kt- >= 0
-    # can produce positive stress from negative force (σ = Kt+*max(F,0) + Kt-*|min(F,0)|).
+    # For INDIVIDUAL/SET negative side we use the signed value min(F,0) so that Kt- >= 0
+    # produces negative stress from negative force (σ = Kt+*max(F,0) + Kt-*min(F,0)).
     cols_list: list[np.ndarray] = []
     names: list[str] = []
     for i, comp in enumerate(FORCE_COLUMNS):
@@ -81,16 +81,16 @@ def _build_force_matrix(df: pd.DataFrame, settings: SolverSettings):
             if fixed_vals and i < len(fixed_vals):
                 kt_plus, kt_minus = fixed_vals[i]
             f_pos = np.maximum(f[:, i], 0.0)
-            f_neg_mag = np.abs(np.minimum(f[:, i], 0.0))  # magnitude of negative part
-            fixed_offset += f_pos * kt_plus + f_neg_mag * kt_minus
+            f_neg = np.minimum(f[:, i], 0.0)  # signed negative part
+            fixed_offset += f_pos * kt_plus + f_neg * kt_minus
         elif mode == SignMode.LINKED:
             cols_list.append(f[:, i : i + 1])
             names.append(comp)
         else:
             f_pos = np.maximum(f[:, i], 0.0).reshape(-1, 1)
-            f_neg_mag = np.abs(np.minimum(f[:, i], 0.0)).reshape(-1, 1)  # magnitude
+            f_neg = np.minimum(f[:, i], 0.0).reshape(-1, 1)  # signed negative part
             cols_list.append(f_pos)
-            cols_list.append(f_neg_mag)
+            cols_list.append(f_neg)
             names.append(f"{comp}+")
             names.append(f"{comp}-")
     if cols_list:
@@ -170,25 +170,25 @@ def _signed_kt_sigma(
                 and i < len(modes)
                 and modes[i] == SignMode.SET
             ):
-                # Fixed Kt; negative side uses magnitude (consistent with force matrix).
+                # Fixed Kt; negative side uses signed value (consistent with force matrix).
                 kt_plus, kt_minus = (0.0, 0.0)
                 if fixed_vals and i < len(fixed_vals):
                     kt_plus, kt_minus = fixed_vals[i]
                 if fval >= 0.0:
                     s += kt_plus * fval
                 else:
-                    s += kt_minus * abs(fval)
+                    s += kt_minus * fval
             elif (
                 settings.use_separate_sign
                 and modes
                 and i < len(modes)
                 and modes[i] == SignMode.INDIVIDUAL
             ):
-                # Per-sign Kt; negative side uses magnitude so Kt-*|F| gives positive contribution when F<0.
+                # Per-sign Kt; negative side uses signed value so Kt-*F gives negative contribution when F<0.
                 if fval >= 0.0:
                     s += kt_map.get(f"{comp}+", 0.0) * fval
                 else:
-                    s += kt_map.get(f"{comp}-", 0.0) * abs(fval)
+                    s += kt_map.get(f"{comp}-", 0.0) * fval
             else:
                 # Linked or non-separate: one Kt per component.
                 # Prefer the base name, fall back to the canonical "+"" slot.
@@ -215,9 +215,9 @@ def recalc_with_fixed_kt(
 ) -> SolverResult:
     """Recalculate predicted stresses for user-edited Kt values (no optimisation).
 
-    This uses the same magnitude-based convention as the LP:
+    This uses the same signed convention as the LP:
 
-        σ_pred = sum_j (Kt_j+ * max(F_j, 0) + Kt_j- * |min(F_j, 0)|)
+        σ_pred = sum_j (Kt_j+ * max(F_j, 0) + Kt_j- * min(F_j, 0))
 
     where (Kt_j+, Kt_j-) come from the canonical Kt list in the fixed order
     CANONICAL_KT_ORDER.
@@ -254,7 +254,7 @@ def recalc_with_fixed_kt(
             if fval >= 0.0:
                 s += kt_map.get(f"{comp}+", 0.0) * fval
             else:
-                s += kt_map.get(f"{comp}-", 0.0) * abs(fval)
+                s += kt_map.get(f"{comp}-", 0.0) * fval
         sigma_pred[row_idx] = s
 
     error = sigma_pred - sigma

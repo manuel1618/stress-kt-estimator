@@ -112,9 +112,10 @@ def expand_kt_to_canonical(
       ``k`` applies to both positive and negative forces. Display shows the
       same value for both ``Fx+`` and ``Fx-`` (symmetric behavior).
 
-    Physical relationship: σ = Kt × F (where both σ and F retain their signs).
-    - LINKED mode: Kt_Fx+ = Kt_Fx- (same geometric amplification)
-    - INDIVIDUAL mode: Kt_Fx+ and Kt_Fx- can differ (asymmetric material/geometry)
+    Physical relationship:
+    - LINKED mode: σ = Kt × F (where both σ and F retain their signs)
+    - INDIVIDUAL mode: σ = Kt+ × max(F,0) + Kt- × min(F,0)
+      (Kt+ and Kt- can differ for asymmetric material/geometry; signs preserved)
     """
     name_to_val = dict(zip(kt_names, kt_values))
     values_out: list[float] = []
