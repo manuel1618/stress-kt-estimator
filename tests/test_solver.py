@@ -112,10 +112,10 @@ def test_find_minimal_unlink_returns_valid_config():
 
 
 def test_linked_mode_same_kt_for_both_signs():
-    """LINKED mode: Kt_Fx+ should equal Kt_Fx-, both non-negative.
+    """LINKED mode: Kt_Fx+ should equal Kt_Fx-.
 
-    Physics: σ = Kt × F where Kt ≥ 0 is a geometric property.
-    Stress sign comes from force sign, not from Kt sign.
+    Physics: σ = Kt × F where Kt is a geometric property.
+    Stress sign comes from the combined effect of Kt sign and force sign.
     """
     df = pd.DataFrame(
         [
@@ -144,10 +144,6 @@ def test_linked_mode_same_kt_for_both_signs():
         f"LINKED mode should have same Kt: Fx+={fx_plus_val}, Fx-={fx_minus_val}"
     )
 
-    # Both should be non-negative
-    assert fx_plus_val >= -1e-6, f"Kt should be non-negative: Fx+={fx_plus_val}"
-    assert fx_minus_val >= -1e-6, f"Kt should be non-negative: Fx-={fx_minus_val}"
-
     # Expected value around 2.0 (200 / 100)
     assert abs(fx_plus_val - 2.0) < 0.1, f"Expected Kt ≈ 2.0, got {fx_plus_val}"
 
@@ -160,7 +156,7 @@ def test_linked_mode_same_kt_for_both_signs():
 
 
 def test_individual_mode_asymmetric_kt():
-    """INDIVIDUAL mode: Kt+ and Kt- can differ, both non-negative.
+    """INDIVIDUAL mode: Kt+ and Kt- can differ.
 
     Tests asymmetric behavior; negative side uses signed value so Kt- × F gives
     negative stress (e.g. Kt- ≈ 3 when F=-100 and stress=-300).
@@ -202,10 +198,6 @@ def test_individual_mode_asymmetric_kt():
         "Expected asymmetric Kt values for different load directions"
     )
 
-    # Both should be non-negative
-    assert fx_plus_val >= -1e-6, f"Kt+ should be non-negative: {fx_plus_val}"
-    assert fx_minus_val >= -1e-6, f"Kt- should be non-negative: {fx_minus_val}"
-
     # Expected values: Kt+ ≈ 2.0, Kt- ≈ 3.0
     assert abs(fx_plus_val - 2.0) < 0.1, f"Expected Kt+ ≈ 2.0, got {fx_plus_val}"
     assert abs(fx_minus_val - 3.0) < 0.1, f"Expected Kt- ≈ 3.0, got {fx_minus_val}"
@@ -218,13 +210,12 @@ def test_individual_mode_asymmetric_kt():
     assert result.min_error >= -1e-6, "Conservative constraint violated"
 
 
-def test_kt_nonnegativity_enforced():
-    """Verify solver enforces Kt ≥ 0 for all modes.
+def test_negative_kt_allows_opposite_sign_stress():
+    """Verify solver finds negative Kt when force and stress have opposite signs.
 
-    Cases where force and stress have opposite signs should be rejected as
-    physically inconsistent (would require negative Kt).
+    A negative Kt is physically valid: the force component causes stress in
+    the opposite direction (e.g. due to geometry or eccentric loading).
     """
-    # Pathological case: negative force, positive stress (impossible with Kt ≥ 0)
     df = pd.DataFrame(
         [
             [
@@ -236,7 +227,7 @@ def test_kt_nonnegativity_enforced():
                 0.0,
                 0.0,
                 200.0,
-            ],  # σ = Kt × F → 200 = Kt × (-100) → Kt = -2 ✗
+            ],  # σ = Kt × F → 200 = Kt × (-100) → Kt = -2
         ],
         columns=TABLE_COLUMNS,
     )
@@ -247,21 +238,89 @@ def test_kt_nonnegativity_enforced():
     )
     result = solve(df, settings)
 
-    # Solver should either:
-    # 1. Fail to find solution (infeasible), OR
-    # 2. Find solution with Kt ≥ 0 but violate conservative constraint
-    if result.success:
-        # If it succeeded, all Kt values must be non-negative
-        for kt_val in result.kt_values:
-            assert kt_val >= -1e-6, f"Kt should be non-negative, got {kt_val}"
-        # But it should violate the conservative constraint (min_error < 0)
-        assert result.min_error < -1e-3, (
-            "Should not satisfy conservative constraint with Kt ≥ 0 for inconsistent data"
+    assert result.success, f"Solver failed: {result.message}"
+
+    # Kt should be approximately -2.0
+    fx_plus_idx = result.kt_names.index("Fx+")
+    fx_val = result.kt_values[fx_plus_idx]
+    assert abs(fx_val - (-2.0)) < 0.1, f"Expected Kt ≈ -2.0, got {fx_val}"
+
+    # Conservative: |predicted| >= |actual| with same sign
+    assert result.sigma_pred[0] >= 200.0 - 1e-6, (
+        f"Predicted stress should be >= 200.0 (conservative), got {result.sigma_pred[0]}"
+    )
+
+
+def test_mixed_sign_stress_real_world():
+    """Test with real-world data where positive force causes negative stress.
+
+    Data pattern from load_cases_test.csv: Fx positive → stress negative.
+    """
+    df = pd.DataFrame(
+        [
+            ["Braked Roll", 42.3, 0.0, 52.8, 0.0, -14753.0, 0.0, -860.7],
+            ["TD Landing", -43.2, 0.0, 55.0, 0.0, 0.0, 0.0, 1615.4],
+            ["2p Landing", 48.8, 0.0, 59.9, 0.0, 0.0, 0.0, -1336.3],
+        ],
+        columns=TABLE_COLUMNS,
+    )
+    settings = SolverSettings(
+        use_separate_sign=True,
+        sign_mode_per_component=[SignMode.LINKED] * 6,
+        objective_mode=ObjectiveMode.MINIMIZE_MAX_DEVIATION,
+        safety_factor=1.0,
+    )
+    result = solve(df, settings)
+    assert result.success, f"Solver failed: {result.message}"
+
+    # Verify conservative constraint: for each case, |sigma_pred| >= |sigma|
+    # with same sign direction
+    for i, case in enumerate(result.per_case):
+        sigma_actual = result.sigma_target[i]
+        sigma_pred = result.sigma_pred[i]
+        if abs(sigma_actual) > 1e-6:
+            assert sigma_actual * sigma_pred >= -1e-6, (
+                f"Case {case.case_name}: sign mismatch between "
+                f"actual={sigma_actual:.1f} and predicted={sigma_pred:.1f}"
+            )
+            assert abs(sigma_pred) >= abs(sigma_actual) - 1e-3, (
+                f"Case {case.case_name}: |predicted|={abs(sigma_pred):.1f} < "
+                f"|actual|={abs(sigma_actual):.1f} (not conservative)"
+            )
+
+
+def test_conservative_constraint_negative_stress():
+    """Conservative constraint for negative stress means more negative prediction.
+
+    If actual stress is -100, a conservative prediction is -110 (not -90).
+    """
+    df = pd.DataFrame(
+        [
+            ["LC1", 100.0, 0.0, 0.0, 0.0, 0.0, 0.0, -100.0],  # Kt = -1
+            ["LC2", 50.0, 0.0, 0.0, 0.0, 0.0, 0.0, -60.0],  # Kt = -1.2
+        ],
+        columns=TABLE_COLUMNS,
+    )
+    settings = SolverSettings(
+        use_separate_sign=False,
+        objective_mode=ObjectiveMode.MINIMIZE_MAX_DEVIATION,
+        safety_factor=1.0,
+    )
+    result = solve(df, settings)
+    assert result.success, f"Solver failed: {result.message}"
+
+    # Both predictions should be <= actual (more negative = conservative for compression)
+    for i in range(len(result.sigma_pred)):
+        assert result.sigma_pred[i] <= result.sigma_target[i] + 1e-6, (
+            f"Case {i}: predicted={result.sigma_pred[i]:.1f} should be <= "
+            f"actual={result.sigma_target[i]:.1f} for conservative compression"
         )
-    else:
-        # Expected: infeasible
-        assert (
-            "infeasible" in result.message.lower() or "failed" in result.message.lower()
+
+    # Margin should be positive (conservative)
+    for case in result.per_case:
+        assert case.margin_pct >= -0.01, (
+            f"Case {case.case_name}: margin={case.margin_pct:.2f}% should be >= 0 "
+            f"(conservative)"
         )
 
 
