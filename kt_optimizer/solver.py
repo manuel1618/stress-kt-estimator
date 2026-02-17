@@ -70,8 +70,8 @@ def _build_force_matrix(df: pd.DataFrame, settings: SolverSettings):
 
     # Per-component: linked => one signed column; individual => two columns (+, -)
     # SET => no columns, contribution goes into fixed_offset
-    # For INDIVIDUAL/SET negative side we use the signed value min(F,0) so that Kt- >= 0
-    # produces negative stress from negative force (σ = Kt+*max(F,0) + Kt-*min(F,0)).
+    # For INDIVIDUAL/SET negative side we use the signed value min(F,0).
+    # σ = Kt+*max(F,0) + Kt-*min(F,0), where Kt can be any real number.
     cols_list: list[np.ndarray] = []
     names: list[str] = []
     for i, comp in enumerate(FORCE_COLUMNS):
@@ -100,21 +100,33 @@ def _build_force_matrix(df: pd.DataFrame, settings: SolverSettings):
 
 
 def _build_bounds(n_vars: int):
-    # Enforce Kt ≥ 0: stress concentration factors are non-negative (physical property).
-    return [(0, None)] * n_vars
+    # Allow Kt to take any real value.  A negative Kt means the force component
+    # causes stress in the opposite direction (e.g. positive Fx → compressive stress).
+    return [(None, None)] * n_vars
 
 
 def _solve_min_max_deviation(f_mat, sigma, settings: SolverSettings):
     n = f_mat.shape[1]
     c = np.concatenate([np.zeros(n), [1.0]])
 
-    # Conservative constraint: f*k >= sigma -> -f*k <= -sigma
-    A1 = np.hstack([-f_mat, np.zeros((f_mat.shape[0], 1))])
-    b1 = -sigma
+    # Sign vector: +1 for tension targets, -1 for compression targets.
+    # Makes the conservative constraint sign-aware so it overpredicts the
+    # *magnitude* of stress regardless of sign direction.
+    s = np.where(sigma >= 0, 1.0, -1.0)
+    S = np.diag(s)
 
-    # Upper deviation: f*k - sigma <= t
-    A2 = np.hstack([f_mat, -np.ones((f_mat.shape[0], 1))])
-    b2 = sigma
+    # Conservative constraint (sign-aware):
+    #   sigma_i >= 0 : f_i*k >= sigma_i   (overpredict tension)
+    #   sigma_i <  0 : f_i*k <= sigma_i   (overpredict compression magnitude)
+    # Uniform LP form: -s_i * f_i * k <= -|sigma_i|
+    A1 = np.hstack([-S @ f_mat, np.zeros((f_mat.shape[0], 1))])
+    b1 = -np.abs(sigma)
+
+    # Upper deviation (sign-aware):
+    #   s_i * (f_i*k - sigma_i) <= t
+    # LP form: s_i * f_i * k - t <= s_i * sigma_i = |sigma_i|
+    A2 = np.hstack([S @ f_mat, -np.ones((f_mat.shape[0], 1))])
+    b2 = np.abs(sigma)
 
     A_ub = np.vstack([A1, A2])
     b_ub = np.concatenate([b1, b2])
@@ -263,8 +275,9 @@ def recalc_with_fixed_kt(
     rms_error = float(np.sqrt(np.mean(np.square(error))))
 
     with np.errstate(divide="ignore", invalid="ignore"):
+        s_margin = np.where(sigma >= 0, 1.0, -1.0)
         margin_pct = np.where(
-            sigma != 0, (sigma_pred - sigma) / np.abs(sigma) * 100.0, np.nan
+            sigma != 0, s_margin * (sigma_pred - sigma) / np.abs(sigma) * 100.0, np.nan
         )
 
     per_case: list[ValidationCase] = []
@@ -567,8 +580,12 @@ def solve(
     rms_error = float(np.sqrt(np.mean(np.square(error))))
 
     with np.errstate(divide="ignore", invalid="ignore"):
+        # Sign-aware margin: positive = conservative (magnitude overprediction),
+        # negative = unconservative.  For tension: (pred-actual)/|actual|.
+        # For compression: (actual-pred)/|actual| (more negative pred is conservative).
+        s_margin = np.where(sigma >= 0, 1.0, -1.0)
         margin_pct = np.where(
-            sigma != 0, (sigma_pred - sigma) / np.abs(sigma) * 100.0, np.nan
+            sigma != 0, s_margin * (sigma_pred - sigma) / np.abs(sigma) * 100.0, np.nan
         )
 
     per_case: list[ValidationCase] = []
@@ -597,14 +614,23 @@ def solve(
     if ill_conditioned:
         logger.warning("Force matrix condition number is high: %.3e", cond_number)
 
+    # Sign-aware conservative check: for tension targets sigma_pred >= sigma,
+    # for compression targets sigma_pred <= sigma (more negative = conservative).
+    # Uniform form: s_i * (sigma_pred_i - sigma_i) >= 0 where s_i = sign(sigma_i).
+    s = np.where(sigma >= 0, 1.0, -1.0)
+    conservative_margin = s * (sigma_pred - sigma)
+    min_conservative_margin = float(np.min(conservative_margin))
+
     sensitivity_violations = 0
     for j in range(len(k)):
         k2 = k.copy()
         k2[j] *= 0.99
-        if np.any((f_mat @ k2 - sigma_effective) < 0):
+        pred_perturbed = (f_mat @ k2 if n_vars > 0 else np.zeros_like(sigma)) + fixed_offset
+        perturbed_margin = s * (pred_perturbed - sigma)
+        if np.any(perturbed_margin < 0):
             sensitivity_violations += 1
 
-    if success and min_error >= -1e-6:
+    if success and min_conservative_margin >= -1e-6:
         logger.info("All load cases satisfied conservatively")
     elif success:
         logger.warning("Optimization succeeded but conservative check failed")
@@ -652,8 +678,8 @@ def solve(
     signed_note = ""
     if signed_inconsistent:
         signed_note = (
-            "signed-Kt interpretation would flip the sign of stress for at least one "
-            "load case; consider disabling 'Enforce Kt ≥ 0' or revisiting sign settings"
+            "signed-Kt model predicts opposite sign of stress for at least one "
+            "load case; review load case data and sign mode settings"
         )
         logger.warning("Signed-Kt consistency check failed: %s", signed_note)
         if constraint_note:

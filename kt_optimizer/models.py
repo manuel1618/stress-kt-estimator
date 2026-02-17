@@ -102,12 +102,14 @@ def expand_kt_to_canonical(
 ) -> tuple[list[str], list[float]]:
     """Return Kt names and values in canonical order, always 12 entries.
 
-    Convention: Kt values are **non-negative** stress amplification factors
-    that multiply **signed** forces to produce signed stresses.
+    Convention: Kt values are stress amplification factors that multiply
+    **signed** forces to produce signed stresses.  Kt can be positive or
+    negative: a negative Kt means the force component causes stress in the
+    opposite direction (e.g. positive force → compressive stress).
 
     - For INDIVIDUAL entries (``Fx+`` / ``Fx-`` already in *kt_names*): the
-      solver coefficients are used directly. Both Kt+ and Kt- are non-negative
-      and can differ (asymmetric behavior).
+      solver coefficients are used directly. Kt+ and Kt- can differ
+      (asymmetric behavior) and can be negative.
     - For LINKED entries (only ``Fx`` in *kt_names*): the single coefficient
       ``k`` applies to both positive and negative forces. Display shows the
       same value for both ``Fx+`` and ``Fx-`` (symmetric behavior).
@@ -115,7 +117,7 @@ def expand_kt_to_canonical(
     Physical relationship:
     - LINKED mode: σ = Kt × F (where both σ and F retain their signs)
     - INDIVIDUAL mode: σ = Kt+ × max(F,0) + Kt- × min(F,0)
-      (Kt+ and Kt- can differ for asymmetric material/geometry; signs preserved)
+      (Kt+ and Kt- can differ for asymmetric material/geometry)
     """
     name_to_val = dict(zip(kt_names, kt_values))
     values_out: list[float] = []
@@ -127,6 +129,6 @@ def expand_kt_to_canonical(
             # LINKED: single k for both + and - directions (symmetric)
             base = name[:-1]  # "Fx+" -> "Fx", "Fx-" -> "Fx"
             raw = name_to_val[base]
-            # Display same value for both + and - (no sign flip)
+            # Display same value for both + and - (symmetric behavior)
             values_out.append(raw)
     return list(CANONICAL_KT_ORDER), values_out
