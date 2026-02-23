@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "stress-kt-estimator"
 version = "0.1.0"
-description = "Conservative Kt optimizer – FastAPI web service and reporting"
+description = "Kt optimizer – FastAPI web service and reporting"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
