@@ -11,9 +11,11 @@ RUN pip install uv
 WORKDIR /app
 
 COPY uv.lock pyproject.toml ./
-RUN uv sync --frozen --no-dev
 
+# Copy source before installing the local project so setuptools sees the package
 COPY . .
+
+RUN uv sync --frozen --no-dev
 
 RUN useradd --create-home app && chown -R app:app /app
 USER app
