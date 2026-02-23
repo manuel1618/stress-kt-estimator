@@ -90,6 +90,12 @@ class FindMinimalUnlinkResponse(BaseModel):
     result: SolverResultOut | None
 
 
+class ExportExcelRequest(BaseModel):
+    load_cases: list[LoadCaseIn] = Field(..., min_length=1)
+    settings: SolverSettingsIn = Field(default_factory=SolverSettingsIn)
+    result: SolverResultOut
+
+
 class PlotRequest(BaseModel):
     kt_names: list[str]
     kt_values: list[float]
@@ -159,6 +165,38 @@ def solver_result_to_out(r) -> SolverResultOut:
         diagnostics=r.diagnostics,
         per_case=[
             ValidationCaseOut(
+                case_name=vc.case_name,
+                actual=vc.actual,
+                predicted=vc.predicted,
+                margin_pct=vc.margin_pct,
+            )
+            for vc in r.per_case
+        ],
+    )
+
+
+def result_out_to_dataclass(r: SolverResultOut):
+    """Convert a Pydantic SolverResultOut to kt_optimizer.models.SolverResult."""
+    from kt_optimizer.models import SolverResult, ValidationCase
+
+    return SolverResult(
+        success=r.success,
+        message=r.message,
+        kt_names=r.kt_names,
+        kt_values=r.kt_values,
+        sigma_target=r.sigma_target,
+        sigma_pred=r.sigma_pred,
+        min_error=r.min_error,
+        max_error=r.max_error,
+        rms_error=r.rms_error,
+        worst_case_margin=r.worst_case_margin,
+        max_overprediction=r.max_overprediction,
+        max_underprediction=r.max_underprediction,
+        condition_number=r.condition_number,
+        sensitivity_violations=r.sensitivity_violations,
+        diagnostics=r.diagnostics,
+        per_case=[
+            ValidationCase(
                 case_name=vc.case_name,
                 actual=vc.actual,
                 predicted=vc.predicted,

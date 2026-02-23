@@ -14,16 +14,16 @@ tasks:
       - task --list
 
   serve:
-    desc: start FastAPI dev server with web frontend (auto-reload)
+    desc: start FastAPI dev server with web frontend
     cmds:
       - echo "Starting {{.APP_NAME}} on http://{{.HOST}}:{{.PORT}}"
-      - uv run uvicorn {{.SERVER_MODULE}}:app --host {{.HOST}} --port {{.PORT}} --reload
+      - uv run python -m {{.SERVER_MODULE}}
 
   serve-prod:
     desc: start FastAPI production server
     cmds:
       - echo "Starting {{.APP_NAME}} (production) on http://{{.HOST}}:{{.PORT}}"
-      - uv run uvicorn {{.SERVER_MODULE}}:app --host {{.HOST}} --port {{.PORT}}
+      - uv run python -m {{.SERVER_MODULE}}
 
   docker-up:
     desc: build and start server via docker-compose

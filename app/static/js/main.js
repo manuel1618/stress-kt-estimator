@@ -9,6 +9,7 @@ const KT_ORDER = [
 ];
 
 let selectedRowIdx = -1;
+let lastResult = null;
 
 /* ── Initialise ────────────────────────────────────────────────────── */
 document.addEventListener("DOMContentLoaded", () => {
@@ -310,6 +311,7 @@ async function findMinimalUnlink() {
  * ================================================================== */
 
 function displayResult(r) {
+    lastResult = r;
     const statusBadge = document.getElementById("resultStatus");
     statusBadge.className = "badge " + (r.success ? "bg-success" : "bg-danger");
     statusBadge.textContent = r.success ? "Success" : "Failed";
@@ -363,6 +365,42 @@ function displayResult(r) {
 
     // Fetch plots
     fetchPlots(r);
+}
+
+async function exportExcel() {
+    if (!lastResult) {
+        alert("Solve or Recalc first to export results.");
+        return;
+    }
+    const cases = collectLoadCases();
+    if (!cases.length) {
+        alert("No load cases to export.");
+        return;
+    }
+    try {
+        const resp = await fetch("/api/export-excel", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                load_cases: cases,
+                settings: collectSettings(),
+                result: lastResult,
+            }),
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || "Export failed");
+        }
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "kt_export.xlsx";
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch (e) {
+        showError(e);
+    }
 }
 
 async function fetchPlots(r) {

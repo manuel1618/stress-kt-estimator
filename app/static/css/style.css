@@ -63,11 +63,12 @@ body {
 #loadCaseTable tr.selected {
     background: #dbeafe !important;
 }
-#loadCaseTable input[type="number"] {
+/* Hide number input spinners (Kt, safety factor, load case table) */
+input[type="number"] {
     -moz-appearance: textfield;
 }
-#loadCaseTable input[type="number"]::-webkit-inner-spin-button,
-#loadCaseTable input[type="number"]::-webkit-outer-spin-button {
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
     -webkit-appearance: none;
     margin: 0;
 }

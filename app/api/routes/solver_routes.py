@@ -4,12 +4,16 @@ import asyncio
 import base64
 import io
 import logging
+import pathlib
+import tempfile
 
 import matplotlib.pyplot as plt
 import numpy as np
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import Response
 
 from app.models.api_models import (
+    ExportExcelRequest,
     FindMinimalUnlinkRequest,
     FindMinimalUnlinkResponse,
     PlotRequest,
@@ -20,9 +24,11 @@ from app.models.api_models import (
     SuggestUnlinkRequest,
     SuggestUnlinkResponse,
     load_cases_to_dataframe,
+    result_out_to_dataclass,
     settings_in_to_dataclass,
     solver_result_to_out,
 )
+from kt_optimizer.export_excel import export_to_excel
 from kt_optimizer.solver import (
     find_minimal_unlink,
     recalc_with_fixed_kt,
@@ -95,6 +101,35 @@ def mk_solver_routes(app: FastAPI) -> None:
     async def api_plot(body: PlotRequest) -> PlotResponse:
         bar_b64, scatter_b64 = await asyncio.to_thread(_render_plots, body)
         return PlotResponse(bar_chart=bar_b64, scatter_chart=scatter_b64)
+
+    @app.post("/api/export-excel", tags=["solver"])
+    async def api_export_excel(body: ExportExcelRequest):
+        """Export load cases, settings, and solver result to an Excel file."""
+        df = load_cases_to_dataframe(body.load_cases)
+        settings = settings_in_to_dataclass(body.settings)
+        result = result_out_to_dataclass(body.result)
+        try:
+            with tempfile.NamedTemporaryFile(
+                suffix=".xlsx", delete=False
+            ) as tmp:
+                path = tmp.name
+            await asyncio.to_thread(
+                export_to_excel, df, result, settings, path
+            )
+            content = pathlib.Path(path).read_bytes()
+            try:
+                pathlib.Path(path).unlink(missing_ok=True)
+            except OSError:
+                pass
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+        return Response(
+            content=content,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": "attachment; filename=kt_export.xlsx"
+            },
+        )
 
 
 def _render_plots(body: PlotRequest) -> tuple[str, str]:
