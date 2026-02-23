@@ -2,12 +2,43 @@ version: "3"
 
 vars:
   APP_MODULE: kt_optimizer.main
+  APP_NAME: stress-kt-estimator
+  SERVER_MODULE: app.main
+  HOST: "0.0.0.0"
+  PORT: "8000"
 
 tasks:
   default:
     desc: show available tasks
     cmds:
       - task --list
+
+  serve:
+    desc: start FastAPI dev server with web frontend
+    cmds:
+      - echo "Starting {{.APP_NAME}} on http://{{.HOST}}:{{.PORT}}"
+      - uv run python -m {{.SERVER_MODULE}}
+
+  serve-prod:
+    desc: start FastAPI production server
+    cmds:
+      - echo "Starting {{.APP_NAME}} (production) on http://{{.HOST}}:{{.PORT}}"
+      - uv run python -m {{.SERVER_MODULE}}
+
+  docker-up:
+    desc: build and start server via docker-compose
+    cmds:
+      - cd docker && docker compose up --build
+
+  docker-down:
+    desc: stop docker-compose stack
+    cmds:
+      - cd docker && docker compose down
+
+  docker-logs:
+    desc: tail logs from docker-compose service
+    cmds:
+      - cd docker && docker compose logs -f
 
   gui:
     desc: start the Kt optimizer GUI
