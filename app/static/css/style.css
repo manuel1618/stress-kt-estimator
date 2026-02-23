@@ -1,0 +1,152 @@
+/* ── Base ─────────────────────────────────────────────────────────── */
+:root {
+    --primary: #2563eb;
+    --primary-dark: #1d4ed8;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --border: #e2e8f0;
+    --bg: #f1f5f9;
+    --card-bg: #ffffff;
+    --text: #1e293b;
+    --text-muted: #94a3b8;
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / .05);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / .1);
+}
+
+body {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: .875rem;
+}
+
+/* ── Navbar ───────────────────────────────────────────────────────── */
+.navbar {
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+    box-shadow: var(--shadow-md);
+    padding: .5rem 0;
+}
+
+/* ── Cards ────────────────────────────────────────────────────────── */
+.card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow-sm);
+    background: var(--card-bg);
+}
+.card-header {
+    background: linear-gradient(135deg, #fff 0%, #f8fafc 100%);
+    border-bottom: 1px solid var(--border);
+    border-radius: 10px 10px 0 0 !important;
+}
+
+/* ── Load-case table ─────────────────────────────────────────────── */
+#loadCaseTable th {
+    background: #f8fafc;
+    font-weight: 600;
+    font-size: .8rem;
+    white-space: nowrap;
+}
+#loadCaseTable input {
+    border: none;
+    background: transparent;
+    width: 100%;
+    padding: .15rem .3rem;
+    font-size: .8rem;
+}
+#loadCaseTable input:focus {
+    outline: 2px solid var(--primary);
+    border-radius: 3px;
+    background: #eff6ff;
+}
+#loadCaseTable tr.selected {
+    background: #dbeafe !important;
+}
+#loadCaseTable input[type="number"] {
+    -moz-appearance: textfield;
+}
+#loadCaseTable input[type="number"]::-webkit-inner-spin-button,
+#loadCaseTable input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+/* ── Constraint status badge ─────────────────────────────────────── */
+.constraint-badge {
+    padding: .5rem .75rem;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: .8rem;
+    text-align: center;
+    transition: background .25s;
+}
+.constraint-badge.status-none     { background: #e2e8f0; color: #475569; }
+.constraint-badge.status-green    { background: #d1fae5; color: #065f46; }
+.constraint-badge.status-orange   { background: #fef3c7; color: #92400e; }
+.constraint-badge.status-red      { background: #fee2e2; color: #991b1b; }
+
+/* ── Kt table ────────────────────────────────────────────────────── */
+#ktTable th {
+    font-size: .7rem;
+    text-align: center;
+    white-space: nowrap;
+    padding: .25rem .35rem;
+}
+#ktTable td {
+    padding: 0;
+}
+#ktTable input {
+    border: none;
+    text-align: center;
+    width: 100%;
+    font-size: .8rem;
+    padding: .2rem;
+    background: transparent;
+}
+#ktTable input:focus {
+    outline: 2px solid var(--primary);
+    background: #eff6ff;
+}
+
+/* ── Per-component settings ──────────────────────────────────────── */
+.component-row .form-select {
+    font-size: .8rem;
+    padding: .25rem .5rem;
+}
+.manual-kt .form-control {
+    font-size: .8rem;
+    padding: .2rem .4rem;
+}
+.manual-kt .input-group-text {
+    font-size: .75rem;
+    padding: .2rem .4rem;
+}
+
+/* ── Summary cards ───────────────────────────────────────────────── */
+.summary-metric {
+    padding: .4rem;
+}
+.summary-metric .value {
+    font-size: 1.1rem;
+    font-weight: 700;
+}
+.summary-metric .label {
+    font-size: .7rem;
+    color: var(--text-muted);
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────── */
+.btn { border-radius: 6px; font-weight: 500; }
+.btn-primary {
+    background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+    border: none;
+}
+.btn-primary:hover {
+    background: linear-gradient(135deg, var(--primary-dark), #1e40af);
+}
+.btn:disabled { opacity: .5; }
+
+/* ── Misc ────────────────────────────────────────────────────────── */
+.spinner-border-sm { width: 1rem; height: 1rem; border-width: .15em; }
+.table-responsive { scrollbar-width: thin; }

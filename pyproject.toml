@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "stress-kt-estimator"
 version = "0.1.0"
-description = "Conservative Kt optimizer prototype with GUI and reporting"
+description = "Conservative Kt optimizer – FastAPI web service and reporting"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -13,16 +13,24 @@ dependencies = [
   "pandas>=2.0",
   "scipy>=1.11",
   "matplotlib>=3.8",
-  "PySide6>=6.6",
   "openpyxl>=3.1",
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.34",
+  "jinja2>=3.1",
+]
+
+[project.optional-dependencies]
+gui = [
+  "PySide6>=6.6",
 ]
 
 [dependency-groups]
 dev = [
   "pytest>=8.0",
+  "httpx>=0.28",
   "ruff>=0.8",
   "pyinstaller>=6.0",
 ]
 
 [tool.setuptools]
-packages = ["kt_optimizer", "kt_optimizer.ui"]
+packages = ["kt_optimizer", "kt_optimizer.ui", "app", "app.api", "app.api.routes", "app.models", "app.utils"]
