@@ -403,6 +403,61 @@ async function exportExcel() {
     }
 }
 
+function exportKtCsv() {
+    if (!lastResult) {
+        alert("Solve or Recalc first to export Kt CSV.");
+        return;
+    }
+    const ktInputs = collectKtValues();
+    const names = lastResult.kt_names || [];
+    let values = Array.isArray(ktInputs) && ktInputs.length === names.length
+        ? ktInputs
+        : (lastResult.kt_values || []);
+    if (!names.length || !values.length || names.length !== values.length) {
+        alert("No Kt values available to export.");
+        return;
+    }
+
+    const ktMap = {};
+    names.forEach((n, i) => {
+        ktMap[n] = values[i];
+    });
+
+    const lines = [];
+    const now = new Date();
+    lines.push("# Kt CSV export from Stress Kt Estimator");
+    lines.push(`# Exported: ${now.toISOString()}`);
+
+    const diag = lastResult.diagnostics || {};
+    if (diag.constraint_status) {
+        lines.push(`# Constraint status: ${diag.constraint_status}`);
+    }
+    if (diag.constraint_status_note) {
+        lines.push(`# Constraint note: ${diag.constraint_status_note}`);
+    }
+
+    const constraintLabel = document.getElementById("constraintLabel");
+    const constraintDetail = document.getElementById("constraintDetail");
+    if (constraintLabel) {
+        const labelText = constraintLabel.textContent || "";
+        const detailText = constraintDetail?.textContent || "";
+        const combined = detailText ? `${labelText} (${detailText})` : labelText;
+        if (combined.trim()) {
+            lines.push(`# UI constraint state: ${combined.trim()}`);
+        }
+    }
+
+    lines.push("name,value");
+    KT_ORDER.forEach(name => {
+        const v = ktMap[name];
+        const val = typeof v === "number" && isFinite(v) ? v : "";
+        lines.push(`${name},${val}`);
+    });
+
+    const csv = lines.join("\n");
+    downloadText(csv, "kt_export.csv", "text/csv");
+}
+
 async function fetchPlots(r) {
     const plotSection = document.getElementById("plotSection");
     try {
